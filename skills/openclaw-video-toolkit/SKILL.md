@@ -3,85 +3,85 @@ name: video_toolkit
 description: Create professional videos autonomously using claude-code-video-toolkit — AI voiceovers, image generation, music, talking heads, and Remotion rendering.
 metadata:
   openclaw:
+    emoji: "🎬"
+    skillKey: "video-toolkit"
     os: ["darwin", "linux"]
     requires:
       bins: ["node", "python3", "ffmpeg", "npm"]
 ---
 
-# Video Toolkit — OpenClaw Skill
+# Video Toolkit
 
-> **Status: Alpha.** This skill is designed for [OpenClaw](https://docs.openclaw.ai) and is experimental. It provides autonomous video creation using the [claude-code-video-toolkit](https://github.com/digitalsamba/claude-code-video-toolkit). Expect rough edges — contributions and feedback welcome.
+Create professional explainer videos from a text brief. The toolkit uses open-source AI models on cloud GPUs (Modal or RunPod) for voiceover, image generation, music, and talking head animation. Remotion (React) handles composition and rendering.
 
-Create professional explainer videos from a text brief. The toolkit uses open-source AI models running on cloud GPUs (Modal) for voiceover, image generation, music, and talking head animation. Remotion (React) handles composition and rendering.
+## CRITICAL: Toolkit Path
 
-## Setup (First Run)
-
-Run the verification script to check current state:
+The toolkit lives at a fixed path. **ALWAYS `cd` here before running any tool command.**
 
 ```bash
-python3 tools/verify_setup.py --json
+TOOLKIT=~/.openclaw/workspace/claude-code-video-toolkit
+cd $TOOLKIT
 ```
 
-If `summary.cloud_gpu` is false, you need to set up Modal. This is a one-time process.
+**NEVER run tool commands from inside a project directory.** Tools resolve paths relative to the toolkit root.
 
-### Install Modal CLI
+## Setup
+
+### Step 1: Check Current State
 
 ```bash
-pip3 install modal
+cd ~/.openclaw/workspace/claude-code-video-toolkit
+python3 tools/verify_setup.py
+```
+
+If everything shows `[x]`, skip to "Quick Test" below. Otherwise continue setup.
+
+### Step 2: Install Python Dependencies
+
+```bash
+cd ~/.openclaw/workspace/claude-code-video-toolkit
+pip3 install --break-system-packages -r tools/requirements.txt
+```
+
+Note: `--break-system-packages` is needed on Debian/Ubuntu with managed Python (PEP 668). Safe inside containers.
+
+### Step 3: Configure Cloud GPU Endpoints
+
+The toolkit needs cloud GPU endpoint URLs in `.env`. Check if `.env` exists and has Modal endpoints:
+
+```bash
+cat ~/.openclaw/workspace/claude-code-video-toolkit/.env | grep MODAL
+```
+
+If Modal endpoints are configured, you're ready. If not, **ask the user to provide Modal endpoint URLs** or set up Modal:
+
+```bash
+pip3 install --break-system-packages modal
 python3 -m modal setup   # Opens browser for authentication
+
+# Deploy each tool — capture the endpoint URL from output
+cd ~/.openclaw/workspace/claude-code-video-toolkit
+modal deploy docker/modal-qwen3-tts/app.py
+modal deploy docker/modal-flux2/app.py
+modal deploy docker/modal-music-gen/app.py
+modal deploy docker/modal-sadtalker/app.py
+modal deploy docker/modal-image-edit/app.py
+modal deploy docker/modal-upscale/app.py
+modal deploy docker/modal-propainter/app.py
 ```
 
-### Install Python Dependencies
-
-```bash
-pip3 install -r tools/requirements.txt
+Add each URL to `.env`:
+```
+MODAL_QWEN3_TTS_ENDPOINT_URL=https://...modal.run
+MODAL_FLUX2_ENDPOINT_URL=https://...modal.run
+MODAL_MUSIC_GEN_ENDPOINT_URL=https://...modal.run
+MODAL_SADTALKER_ENDPOINT_URL=https://...modal.run
+MODAL_IMAGE_EDIT_ENDPOINT_URL=https://...modal.run
+MODAL_UPSCALE_ENDPOINT_URL=https://...modal.run
+MODAL_DEWATERMARK_ENDPOINT_URL=https://...modal.run
 ```
 
-### Deploy Tools to Modal
-
-Each tool is a separate Modal app. Deploy them and capture the endpoint URLs:
-
-```bash
-# Deploy each tool — the output contains the endpoint URL
-# Look for the line: "Created web endpoint for ... => https://...modal.run"
-
-modal deploy docker/modal-qwen3-tts/app.py    # Speech (most important)
-modal deploy docker/modal-flux2/app.py         # Image generation
-modal deploy docker/modal-music-gen/app.py     # Background music
-modal deploy docker/modal-sadtalker/app.py     # Talking head narrator
-modal deploy docker/modal-image-edit/app.py    # Image editing
-modal deploy docker/modal-upscale/app.py       # Image upscaling
-modal deploy docker/modal-propainter/app.py    # Watermark removal
-```
-
-After each deploy, Modal prints a URL like:
-```
-https://username--video-toolkit-flux2-flux2-generate.modal.run
-```
-
-### Save Endpoint URLs to .env
-
-Create or update `.env` in the toolkit root with the URLs from each deploy:
-
-```bash
-# Create .env if it doesn't exist
-touch .env
-
-# Add each endpoint URL (replace with actual URLs from deploy output)
-echo 'MODAL_QWEN3_TTS_ENDPOINT_URL=https://username--video-toolkit-qwen3-tts-ttsengine-generate.modal.run' >> .env
-echo 'MODAL_FLUX2_ENDPOINT_URL=https://username--video-toolkit-flux2-flux2-generate.modal.run' >> .env
-echo 'MODAL_MUSIC_GEN_ENDPOINT_URL=https://username--video-toolkit-music-gen-musicgen-generate.modal.run' >> .env
-echo 'MODAL_SADTALKER_ENDPOINT_URL=https://username--video-toolkit-sadtalker-sadtalkergen-generate.modal.run' >> .env
-echo 'MODAL_IMAGE_EDIT_ENDPOINT_URL=https://username--video-toolkit-image-edit-qwenedit-edit.modal.run' >> .env
-echo 'MODAL_UPSCALE_ENDPOINT_URL=https://username--video-toolkit-upscale-upscaler-upscale.modal.run' >> .env
-echo 'MODAL_DEWATERMARK_ENDPOINT_URL=https://username--video-toolkit-dewatermark-dewatermark-dewatermark.modal.run' >> .env
-```
-
-### Optional: Cloudflare R2 (Recommended)
-
-R2 provides reliable file transfer between your machine and cloud GPUs. Free tier: 10GB storage, zero egress. Without it, tools fall back to free upload services (slower, less reliable).
-
-If the user has R2 credentials, add to `.env`:
+Optional but recommended — Cloudflare R2 for reliable file transfer:
 ```
 R2_ACCOUNT_ID=...
 R2_ACCESS_KEY_ID=...
@@ -89,33 +89,44 @@ R2_SECRET_ACCESS_KEY=...
 R2_BUCKET_NAME=video-toolkit
 ```
 
-### Verify Setup
-
-Run verification again to confirm everything is configured:
+### Step 4: Verify and Quick Test
 
 ```bash
+cd ~/.openclaw/workspace/claude-code-video-toolkit
 python3 tools/verify_setup.py
 ```
 
-All tools should show as configured. Modal apps scale to zero when idle — no ongoing cost.
+All tools should show `[x]`. Then run a quick test to confirm the GPU pipeline works:
 
-**Cost:** Modal Starter plan includes $30/month free compute. A typical 60s video costs $1-3 to produce.
+```bash
+cd ~/.openclaw/workspace/claude-code-video-toolkit
+python3 tools/qwen3_tts.py --text "Hello, this is a test." --speaker Ryan --tone warm --output /tmp/video-toolkit-test.mp3 --cloud modal
+```
 
-## End-to-End Workflow
+If you get a valid .mp3 file, setup is complete. If it fails, check:
+- `.env` has the correct `MODAL_QWEN3_TTS_ENDPOINT_URL`
+- Run `python3 tools/verify_setup.py --json` and check `modal_tools` for which endpoints are missing
+
+**Cost:** Modal includes $30/month free compute. A typical 60s video costs $1-3.
+
+---
+
+## Creating a Video
 
 ### Step 1: Create Project
 
 ```bash
-cp -r templates/product-demo projects/{project-name}
-cd projects/{project-name}
+cd ~/.openclaw/workspace/claude-code-video-toolkit
+cp -r templates/product-demo projects/PROJECT_NAME
+cd projects/PROJECT_NAME
 npm install
 ```
 
-Templates available: `product-demo` (marketing/explainer), `sprint-review` (sprint demos), `sprint-review-v2` (composable scenes).
+Templates: `product-demo` (marketing/explainer), `sprint-review`, `sprint-review-v2` (composable scenes).
 
-### Step 2: Write the Config
+### Step 2: Write Config
 
-Edit `src/config/demo-config.ts`. The config drives everything:
+Edit `projects/PROJECT_NAME/src/config/demo-config.ts`:
 
 ```typescript
 export const demoConfig: ProductDemoConfig = {
@@ -126,10 +137,10 @@ export const demoConfig: ProductDemoConfig = {
   },
   scenes: [
     { type: 'title', durationSeconds: 9, content: { headline: '...', subheadline: '...' } },
-    { type: 'problem', durationSeconds: 14, content: { headline: '...', problems: [...] } },
-    { type: 'solution', durationSeconds: 13, content: { headline: '...', highlights: [...] } },
-    { type: 'stats', durationSeconds: 12, content: { stats: [...] } },
-    { type: 'cta', durationSeconds: 10, content: { headline: '...', links: [...] } },
+    { type: 'problem', durationSeconds: 14, content: { headline: '...', problems: ['...', '...'] } },
+    { type: 'solution', durationSeconds: 13, content: { headline: '...', highlights: ['...', '...'] } },
+    { type: 'stats', durationSeconds: 12, content: { stats: [{value: '99%', label: '...'}, ...] } },
+    { type: 'cta', durationSeconds: 10, content: { headline: '...', links: ['...'] } },
   ],
   audio: {
     backgroundMusicFile: 'audio/bg-music.mp3',
@@ -140,183 +151,205 @@ export const demoConfig: ProductDemoConfig = {
 
 Scene types: `title`, `problem`, `solution`, `demo`, `feature`, `stats`, `cta`.
 
-**Duration rule:** Set `durationSeconds` to `ceil(voiceover_duration + 2)`. You won't know the exact voiceover duration until Step 4, so estimate at ~2.5 words/second, then adjust after generating audio.
+**Duration rule:** Estimate `durationSeconds` as `ceil(word_count / 2.5) + 2`. You will adjust this after generating audio in Step 4.
 
-### Step 3: Write the Voiceover Script
+### Step 3: Write Voiceover Script
 
-Create `VOICEOVER-SCRIPT.md` with one section per scene:
+Create `projects/PROJECT_NAME/VOICEOVER-SCRIPT.md`:
 
 ```markdown
-## Scene 1: Title (9s, ~15 words)
-Build videos with AI. This is the product name toolkit.
+## Scene 1: Title (9s, ~17 words)
+Build videos with AI. The product name toolkit makes it easy.
 
 ## Scene 2: Problem (14s, ~30 words)
 The problem statement goes here. Keep it punchy and relatable.
 ```
 
-**Word budget:** `(durationSeconds - 2) * 2.5` words per scene. The -2 accounts for the 1s audio delay and 1s padding.
+**Word budget per scene:** `(durationSeconds - 2) * 2.5` words. The -2 accounts for 1s audio delay + 1s padding.
 
 ### Step 4: Generate Assets
 
-**All tool commands must be run from the toolkit root directory** (not from inside the project). This is critical.
+**CRITICAL: All commands below MUST be run from the toolkit root, not the project directory.**
 
 ```bash
-cd /path/to/claude-code-video-toolkit
+cd ~/.openclaw/workspace/claude-code-video-toolkit
 ```
 
-#### 4a. Background Music (ACE-Step)
+#### 4a. Background Music
 
 ```bash
-python3 tools/music_gen.py --preset corporate-bg --duration 90 --output projects/{name}/public/audio/bg-music.mp3 --cloud modal
+cd ~/.openclaw/workspace/claude-code-video-toolkit
+python3 tools/music_gen.py \
+  --preset corporate-bg \
+  --duration 90 \
+  --output projects/PROJECT_NAME/public/audio/bg-music.mp3 \
+  --cloud modal
 ```
 
 Presets: `corporate-bg`, `upbeat-tech`, `ambient`, `dramatic`, `tension`, `hopeful`, `cta`, `lofi`.
 
-#### 4b. Voiceover (Qwen3-TTS)
+#### 4b. Voiceover (per-scene)
 
-Generate per-scene audio files:
+Generate ONE .mp3 file PER SCENE. Do NOT generate a single voiceover file.
 
 ```bash
-# For each scene:
+cd ~/.openclaw/workspace/claude-code-video-toolkit
+
+# Scene 01
 python3 tools/qwen3_tts.py \
-  --text "The voiceover text for this scene" \
-  --speaker Ryan \
-  --tone warm \
-  --output projects/{name}/public/audio/scenes/01.mp3 \
+  --text "The voiceover text for scene one." \
+  --speaker Ryan --tone warm \
+  --output projects/PROJECT_NAME/public/audio/scenes/01.mp3 \
   --cloud modal
+
+# Scene 02
+python3 tools/qwen3_tts.py \
+  --text "The voiceover text for scene two." \
+  --speaker Ryan --tone warm \
+  --output projects/PROJECT_NAME/public/audio/scenes/02.mp3 \
+  --cloud modal
+
+# ... repeat for each scene
 ```
 
-Speakers: `Ryan`, `Aiden`, `Vivian`, `Luna`, `Aurora`, `Aria`, `Nova`, `Stella`, `Orion`.
-Tones: `neutral`, `warm`, `professional`, `excited`, `calm`, `serious`.
+**Speakers:** `Ryan`, `Aiden`, `Vivian`, `Serena`, `Uncle_Fu`, `Dylan`, `Eric`, `Ono_Anna`, `Sohee`
+**Tones:** `neutral`, `warm`, `professional`, `excited`, `calm`, `serious`, `storyteller`, `tutorial`
 
-For voice cloning (if the user has a reference recording):
+For voice cloning (needs a reference recording):
 ```bash
+cd ~/.openclaw/workspace/claude-code-video-toolkit
 python3 tools/qwen3_tts.py \
-  --text "..." \
+  --text "Text to speak" \
   --ref-audio assets/voices/reference.m4a \
-  --ref-text "Transcript of the reference audio" \
-  --output projects/{name}/public/audio/scenes/01.mp3 \
+  --ref-text "Exact transcript of the reference audio" \
+  --output projects/PROJECT_NAME/public/audio/scenes/01.mp3 \
   --cloud modal
 ```
 
-#### 4c. Scene Images (FLUX.2)
-
-Generate background images for key scenes:
+#### 4c. Scene Images
 
 ```bash
+cd ~/.openclaw/workspace/claude-code-video-toolkit
 python3 tools/flux2.py \
   --prompt "Dark tech background with blue geometric grid, cinematic lighting" \
   --width 1920 --height 1080 \
-  --output projects/{name}/public/images/title-bg.png \
+  --output projects/PROJECT_NAME/public/images/title-bg.png \
   --cloud modal
 ```
 
-#### 4d. Presenter Portrait + Talking Head (FLUX.2 + SadTalker)
-
-Generate a presenter portrait, then animate it with SadTalker for narrator PiP:
+Image presets (use `--preset` instead of `--prompt --width --height`):
+`title-bg`, `problem`, `solution`, `demo-bg`, `stats-bg`, `cta`, `thumbnail`, `portrait-bg`
 
 ```bash
-# Generate portrait
+cd ~/.openclaw/workspace/claude-code-video-toolkit
+python3 tools/flux2.py \
+  --preset title-bg \
+  --output projects/PROJECT_NAME/public/images/title-bg.png \
+  --cloud modal
+```
+
+#### 4d. Talking Head Narrator (optional)
+
+Generate a presenter portrait, then animate per-scene clips:
+
+```bash
+cd ~/.openclaw/workspace/claude-code-video-toolkit
+
+# 1. Generate portrait
 python3 tools/flux2.py \
   --prompt "Professional presenter portrait, clean style, dark background, facing camera, upper body" \
   --width 1024 --height 576 \
-  --output /tmp/presenter.png \
+  --output projects/PROJECT_NAME/public/images/presenter.png \
   --cloud modal
 
-# Generate per-scene narrator clips (NOT one big file — keep them short)
+# 2. Generate per-scene narrator clips (one per scene, NOT one long video)
 python3 tools/sadtalker.py \
-  --image /tmp/presenter.png \
-  --audio projects/{name}/public/audio/scenes/01.mp3 \
+  --image projects/PROJECT_NAME/public/images/presenter.png \
+  --audio projects/PROJECT_NAME/public/audio/scenes/01.mp3 \
   --preprocess full --still --expression-scale 0.8 \
-  --output projects/{name}/public/narrator-01.mp4 \
+  --output projects/PROJECT_NAME/public/narrator-01.mp4 \
   --cloud modal
+
+# Repeat for each scene that needs a narrator
 ```
 
-**Critical SadTalker notes:**
-- Always use `--preprocess full` (preserves dimensions, default `crop` outputs square)
-- Always use `--still` for professional look (reduces head movement)
-- Generate per-scene clips (6-15s each), NOT one long video
-- Processing time is ~3-4 min per 10s of audio on Modal A10G
-- The `--expression-scale 0.8` keeps expressions subtle
+**SadTalker rules — follow these exactly:**
+- **ALWAYS** use `--preprocess full` (default `crop` outputs a square, wrong aspect ratio)
+- **ALWAYS** use `--still` (reduces head movement, looks professional)
+- **ALWAYS** generate per-scene clips (6-15s each), NEVER one long video
+- Processing: ~3-4 min per 10s of audio on Modal A10G
+- `--expression-scale 0.8` keeps expressions subtle (range 0.0-1.5)
 
-#### 4e. Image Editing (Qwen-Edit) — optional
+#### 4e. Image Editing (optional)
 
 Create scene variants from existing images:
 
 ```bash
+cd ~/.openclaw/workspace/claude-code-video-toolkit
 python3 tools/image_edit.py \
-  --input projects/{name}/public/images/title-bg.png \
+  --input projects/PROJECT_NAME/public/images/title-bg.png \
   --prompt "Make it darker with red tones, more ominous" \
-  --output projects/{name}/public/images/problem-bg.png \
+  --output projects/PROJECT_NAME/public/images/problem-bg.png \
   --cloud modal
 ```
 
-#### 4f. Upscaling (RealESRGAN) — optional
-
-Upscale images for HD quality:
+#### 4f. Upscaling (optional)
 
 ```bash
+cd ~/.openclaw/workspace/claude-code-video-toolkit
 python3 tools/upscale.py \
-  --input image.png --output image-4x.png --scale 4 --cloud modal
+  --input projects/PROJECT_NAME/public/images/some-image.png \
+  --output projects/PROJECT_NAME/public/images/some-image-4x.png \
+  --scale 4 --cloud modal
 ```
 
 ### Step 5: Sync Timing
 
-After generating voiceover, check actual durations and update config:
+**ALWAYS do this after generating voiceover.** Audio duration differs from estimates.
 
 ```bash
-# Check each audio file duration
-for f in projects/{name}/public/audio/scenes/*.mp3; do
+cd ~/.openclaw/workspace/claude-code-video-toolkit
+for f in projects/PROJECT_NAME/public/audio/scenes/*.mp3; do
   echo "$(basename $f): $(ffprobe -v error -show_entries format=duration -of csv=p=0 "$f")s"
 done
 ```
 
-Update each scene's `durationSeconds` in `demo-config.ts` to: `ceil(audio_duration + 2)`.
+Update each scene's `durationSeconds` in `demo-config.ts` to: `ceil(actual_audio_duration + 2)`.
 
-### Step 6: Review
+Example: if `01.mp3` is 6.8s, set scene 1 `durationSeconds` to `9` (ceil(6.8 + 2) = 9).
 
-Render still frames at scene midpoints and inspect visually:
+### Step 6: Review Still Frames
 
 ```bash
-cd projects/{name}
-npx remotion still src/index.ts ProductDemo --frame=100 --output=/tmp/review-title.png
-npx remotion still src/index.ts ProductDemo --frame=400 --output=/tmp/review-problem.png
-# ... etc for each scene
+cd ~/.openclaw/workspace/claude-code-video-toolkit/projects/PROJECT_NAME
+npx remotion still src/index.ts ProductDemo --frame=100 --output=/tmp/review-scene1.png
+npx remotion still src/index.ts ProductDemo --frame=400 --output=/tmp/review-scene2.png
 ```
 
-Check for:
-- Text truncation or overflow
-- Animation timing (are all elements visible?)
-- Narrator PiP positioning
-- Background image opacity/contrast
+Check: text truncation, animation timing, narrator PiP positioning, background contrast.
 
-### Step 7: Preview & Render
+### Step 7: Render
 
 ```bash
-cd projects/{name}
-
-# Preview in browser
-npm run studio
-
-# Render final MP4
+cd ~/.openclaw/workspace/claude-code-video-toolkit/projects/PROJECT_NAME
 npm run render
 ```
 
-Output lands in `out/ProductDemo.mp4`.
+**Output:** `out/ProductDemo.mp4`
+
+---
 
 ## Composition Patterns
 
 ### Per-Scene Audio
 
-Don't use a single voiceover file. Use per-scene audio inside `TransitionSeries.Sequence`:
+Use per-scene audio with a 1-second delay (`from={30}` = 30 frames = 1s at 30fps):
 
 ```tsx
 <Sequence from={30}>
   <Audio src={staticFile('audio/scenes/01.mp3')} volume={1} />
 </Sequence>
 ```
-
-The `from={30}` adds a 1-second delay so scenes don't start talking immediately.
 
 ### Per-Scene Narrator PiP
 
@@ -330,11 +363,9 @@ The `from={30}` adds a 1-second delay so scenes don't start talking immediately.
 </Sequence>
 ```
 
-**Always use `<OffthreadVideo>`, never `<video>`.** Remotion requires its own video component for frame-accurate rendering.
+**ALWAYS use `<OffthreadVideo>`, NEVER `<video>`.** Remotion requires its own component for frame-accurate rendering.
 
 ### Transitions
-
-Import custom transitions from `lib/transitions/presentations/` and Remotion's from `@remotion/transitions`:
 
 ```tsx
 import { TransitionSeries, linearTiming } from '@remotion/transitions';
@@ -343,7 +374,23 @@ import { glitch } from '../../../lib/transitions/presentations/glitch';
 import { lightLeak } from '../../../lib/transitions/presentations/light-leak';
 ```
 
-Do NOT import `TransitionSeries` or `fade` from `lib/transitions` — it won't resolve.
+**NEVER import from `lib/transitions` barrel** — import custom transitions from `lib/transitions/presentations/` directly.
+
+---
+
+## Error Recovery
+
+| Problem | Solution |
+|---------|----------|
+| Tool command fails with "No module named..." | Run `pip3 install --break-system-packages -r tools/requirements.txt` from toolkit root |
+| "MODAL_*_ENDPOINT_URL not configured" | Check `.env` has the endpoint URL. Run `python3 tools/verify_setup.py` |
+| SadTalker output is square/cropped | You forgot `--preprocess full`. Re-run with that flag |
+| Audio too short/long for scene | Re-run Step 5 (sync timing) and update config |
+| `npm run render` fails | Make sure you're in the project dir, not toolkit root. Run `npm install` first |
+| "Cannot find module" in Remotion | Check import paths. Custom components use `../../../lib/` relative paths |
+| Cold start timeout on Modal | First call after idle takes 30-120s. Retry once — second call uses warm GPU |
+
+---
 
 ## Cost Estimates (Modal)
 
@@ -356,13 +403,6 @@ Do NOT import `TransitionSeries` or `fade` from `lib/transitions` — it won't r
 | Qwen-Edit | ~$0.03-0.15 | ~8 min cold start (25GB model) |
 | RealESRGAN | ~$0.005/image | Very fast |
 
-**Total for a 60s video:** ~$1-3 depending on number of scenes and narrator clips.
+**Total for a 60s video:** ~$1-3 depending on scenes and narrator clips.
 
-## Common Mistakes
-
-1. **Running tools from project directory** — Always `cd` to toolkit root first
-2. **Using `<video>` instead of `<OffthreadVideo>`** — Will not render correctly
-3. **Importing transitions from `lib/transitions` barrel** — Import custom transitions from `lib/transitions/presentations/` directly
-4. **One big SadTalker video** — Generate per-scene clips (6-15s), not one 60s file
-5. **Not syncing timing after TTS** — Audio duration ≠ estimated duration. Always check and update config
-6. **Missing 1s audio delay in duration math** — If audio starts at `from={30}`, add 1s to your duration calculation
+Modal Starter plan: $30/month free compute. Apps scale to zero when idle.
