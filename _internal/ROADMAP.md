@@ -118,6 +118,22 @@ An open-source, AI-native video production workspace for Claude Code, featuring:
 - [x] Temperature/top_p generation params for expressiveness control
 - [ ] Make Qwen3-TTS the default provider (replacing ElevenLabs)
 
+**Modal Cloud GPU Provider:**
+- [x] `tools/cloud_gpu.py` — shared provider abstraction (RunPod + Modal)
+- [x] `tools/file_transfer.py` — shared R2/fallback upload/download
+- [x] `--cloud runpod|modal` flag on all cloud GPU tools
+- [x] `docker/modal-qwen3-tts/app.py` — deployed, tested
+- [x] `docker/modal-flux2/app.py` — deployed, tested
+- [x] `docker/modal-upscale/app.py` — deployed, tested
+- [x] `docker/modal-image-edit/app.py` — deployed, tested
+- [x] `docker/modal-music-gen/app.py` — deployed, tested
+- [x] `docker/modal-sadtalker/app.py` — deployed, tested
+- [x] `--runpod` deprecated in upscale.py and dewatermark.py (alias for `--cloud runpod`)
+- [x] `voiceover.py` passes `--cloud` through to Qwen3-TTS
+- [x] `dewatermark.py` migrated to `cloud_gpu.py` (removed ~393 lines of inline RunPod code)
+- [ ] `docs/modal-setup.md` — setup guide for Modal deployment
+- [ ] Add `--setup --cloud modal` to tools (currently manual `modal deploy`)
+
 **Sprint Review v2:**
 - [x] `sprint-review-v2` template — composable scene-based architecture
 - [x] Modular scene components
@@ -177,6 +193,7 @@ An open-source, AI-native video production workspace for Claude Code, featuring:
 | frontend-design | stable | Visual design refinement |
 | qwen-edit | stable | AI image editing prompting patterns |
 | runpod | stable | Cloud GPU setup, Docker images, endpoint management |
+| modal | beta | Alternative cloud GPU provider — faster cold starts, all 6 tools deployed |
 
 ---
 
@@ -204,7 +221,7 @@ An open-source, AI-native video production workspace for Claude Code, featuring:
 | Brands | 2 | default, digital-samba |
 | Skills | 8 | 6 stable, 2 beta |
 | Tools | 12 | voiceover, music, sfx, redub, addmusic, dewatermark, locate_watermark, notebooklm_brand, image_edit, upscale, sadtalker, qwen3_tts |
-| Commands | 12 | video, brand, template, skills, contribute, record-demo, generate-voiceover, scene-review, design, versions, redub, voice-clone |
+| Commands | 13 | setup, video, brand, template, skills, contribute, record-demo, generate-voiceover, scene-review, design, versions, redub, voice-clone |
 | Components | 11 | AnimatedBackground, SlideTransition, Label, Vignette, FilmGrain, LogoWatermark, SplitScreen, NarratorPiP, Envelope, PointingHand, MazeDecoration |
 | Transitions | 7 | glitch, rgbSplit, zoomBlur, lightLeak, clockWipe, pixelate, checkerboard |
 | Examples | 3 | hello-world, digital-samba-skill-demo, sprint-review-cho-oyu |

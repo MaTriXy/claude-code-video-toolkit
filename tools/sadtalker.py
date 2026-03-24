@@ -30,13 +30,19 @@ Cost:
 """
 
 import argparse
+import base64
 import json
 import os
 import sys
-import time
 from pathlib import Path
 
 import requests
+
+sys.path.insert(0, str(Path(__file__).parent))
+from file_transfer import (
+    upload_to_storage, download_from_r2, delete_from_r2,
+    download_from_url, get_r2_payload_config,
+)
 
 # Docker image for RunPod endpoint
 SADTALKER_DOCKER_IMAGE = "ghcr.io/conalmullan/video-toolkit-sadtalker:latest"
@@ -44,8 +50,8 @@ SADTALKER_TEMPLATE_NAME = "video-toolkit-sadtalker"
 SADTALKER_ENDPOINT_NAME = "video-toolkit-sadtalker"
 
 # Processing time estimate: ~4 minutes per minute of audio + buffer
-PROCESSING_TIME_MULTIPLIER = 4
-PROCESSING_TIME_BUFFER = 120  # 2 minute buffer for cold start, upload, etc.
+PROCESSING_TIME_MULTIPLIER = 12  # ~10x processing time per second of audio + margin
+PROCESSING_TIME_BUFFER = 180  # 3 minute buffer for cold start, upload, etc.
 
 
 def get_audio_duration(audio_path: str) -> float | None:
@@ -76,333 +82,6 @@ def calculate_timeout(audio_duration: float) -> int:
     return int(processing_time + PROCESSING_TIME_BUFFER)
 
 
-def get_runpod_config() -> dict:
-    """Get RunPod configuration from environment."""
-    sys.path.insert(0, str(Path(__file__).parent))
-    try:
-        from config import get_runpod_api_key
-        api_key = get_runpod_api_key()
-    except ImportError:
-        from dotenv import load_dotenv
-        load_dotenv()
-        api_key = os.getenv("RUNPOD_API_KEY")
-
-    from dotenv import load_dotenv
-    load_dotenv()
-    endpoint_id = os.getenv("RUNPOD_SADTALKER_ENDPOINT_ID")
-
-    return {
-        "api_key": api_key,
-        "endpoint_id": endpoint_id,
-    }
-
-
-def _get_r2_client():
-    """Get boto3 S3 client configured for Cloudflare R2."""
-    sys.path.insert(0, str(Path(__file__).parent))
-    try:
-        from config import get_r2_config
-        r2_config = get_r2_config()
-    except ImportError:
-        r2_config = None
-
-    if not r2_config:
-        return None, None
-
-    try:
-        import boto3
-        from botocore.config import Config
-
-        client = boto3.client(
-            "s3",
-            endpoint_url=r2_config["endpoint_url"],
-            aws_access_key_id=r2_config["access_key_id"],
-            aws_secret_access_key=r2_config["secret_access_key"],
-            config=Config(signature_version="s3v4"),
-        )
-        return client, r2_config
-    except ImportError:
-        print("  boto3 not installed, skipping R2", file=sys.stderr)
-        return None, None
-
-
-def _upload_to_r2(file_path: str, prefix: str) -> tuple[str | None, str | None]:
-    """Upload to Cloudflare R2 and return presigned download URL."""
-    client, config = _get_r2_client()
-    if not client:
-        return None, None
-
-    import uuid
-    file_name = Path(file_path).name
-    object_key = f"{prefix}/{uuid.uuid4().hex[:8]}_{file_name}"
-
-    try:
-        client.upload_file(file_path, config["bucket_name"], object_key)
-
-        url = client.generate_presigned_url(
-            "get_object",
-            Params={"Bucket": config["bucket_name"], "Key": object_key},
-            ExpiresIn=7200,
-        )
-        return url, object_key
-    except Exception as e:
-        print(f"  R2 upload error: {e}", file=sys.stderr)
-        return None, None
-
-
-def _delete_from_r2(object_key: str) -> bool:
-    """Delete object from R2 after job completion."""
-    client, config = _get_r2_client()
-    if not client or not object_key:
-        return False
-
-    try:
-        client.delete_object(Bucket=config["bucket_name"], Key=object_key)
-        return True
-    except Exception:
-        return False
-
-
-def _download_from_r2(object_key: str, output_path: str) -> bool:
-    """Download object from R2 to local path."""
-    client, config = _get_r2_client()
-    if not client:
-        return False
-
-    try:
-        client.download_file(config["bucket_name"], object_key, output_path)
-        return True
-    except Exception as e:
-        print(f"  R2 download error: {e}", file=sys.stderr)
-        return False
-
-
-def upload_to_storage(file_path: str, prefix: str) -> tuple[str | None, str | None]:
-    """Upload a file to temporary storage for job input."""
-    file_size = Path(file_path).stat().st_size
-    file_name = Path(file_path).name
-
-    print(f"Uploading {file_name} ({file_size // 1024}KB)...", file=sys.stderr)
-
-    # Try R2 first if configured
-    url, r2_key = _upload_to_r2(file_path, prefix)
-    if url:
-        print(f"  Upload complete (R2)", file=sys.stderr)
-        return url, r2_key
-
-    # Fall back to free services
-    upload_services = [
-        ("litterbox", _upload_to_litterbox),
-        ("0x0.st", _upload_to_0x0),
-    ]
-
-    for service_name, upload_func in upload_services:
-        try:
-            url = upload_func(file_path, file_name)
-            if url:
-                print(f"  Upload complete ({service_name})", file=sys.stderr)
-                return url, None
-        except Exception as e:
-            print(f"  {service_name} failed: {e}", file=sys.stderr)
-            continue
-
-    print("All upload services failed", file=sys.stderr)
-    return None, None
-
-
-def _upload_to_litterbox(file_path: str, file_name: str) -> str | None:
-    """Upload to litterbox.catbox.moe (200MB limit, 24h retention)."""
-    import subprocess
-    result = subprocess.run(
-        [
-            "curl", "-s",
-            "-F", "reqtype=fileupload",
-            "-F", "time=24h",
-            "-F", f"fileToUpload=@{file_path}",
-            "https://litterbox.catbox.moe/resources/internals/api.php",
-        ],
-        capture_output=True,
-        text=True,
-        timeout=300,
-    )
-    if result.returncode == 0:
-        url = result.stdout.strip()
-        if url.startswith("http"):
-            return url
-    return None
-
-
-def _upload_to_0x0(file_path: str, file_name: str) -> str | None:
-    """Upload to 0x0.st (512MB limit, 30 day retention)."""
-    import subprocess
-    result = subprocess.run(
-        ["curl", "-s", "-F", f"file=@{file_path}", "https://0x0.st"],
-        capture_output=True,
-        text=True,
-        timeout=300,
-    )
-    if result.returncode == 0:
-        url = result.stdout.strip()
-        if url.startswith("http"):
-            return url
-    return None
-
-
-def submit_runpod_job(
-    endpoint_id: str,
-    api_key: str,
-    image_url: str,
-    audio_url: str,
-    still_mode: bool = False,
-    enhancer: str = "gfpgan",
-    preprocess: str = "crop",
-    size: int = 256,
-    expression_scale: float = 1.0,
-    pose_style: int = 0,
-    r2_config: dict | None = None,
-) -> dict | None:
-    """Submit a SadTalker job to RunPod serverless endpoint."""
-    url = f"https://api.runpod.ai/v2/{endpoint_id}/run"
-
-    payload = {
-        "input": {
-            "image_url": image_url,
-            "audio_url": audio_url,
-            "still_mode": still_mode,
-            "enhancer": enhancer,
-            "preprocess": preprocess,
-            "size": size,
-            "expression_scale": expression_scale,
-            "pose_style": pose_style,
-        }
-    }
-
-    # Pass R2 credentials for result upload
-    if r2_config:
-        payload["input"]["r2"] = {
-            "endpoint_url": r2_config["endpoint_url"],
-            "access_key_id": r2_config["access_key_id"],
-            "secret_access_key": r2_config["secret_access_key"],
-            "bucket_name": r2_config["bucket_name"],
-        }
-
-    try:
-        response = requests.post(
-            url,
-            json=payload,
-            headers={"Authorization": f"Bearer {api_key}"},
-            timeout=30,
-        )
-
-        if response.status_code == 200:
-            return response.json()
-        else:
-            print(f"Job submission failed: HTTP {response.status_code}", file=sys.stderr)
-            print(f"  Response: {response.text[:500]}", file=sys.stderr)
-            return None
-
-    except Exception as e:
-        print(f"Job submission error: {e}", file=sys.stderr)
-        return None
-
-
-def poll_runpod_job(
-    endpoint_id: str,
-    api_key: str,
-    job_id: str,
-    timeout: int = 600,
-    poll_interval: int = 5,
-    verbose: bool = True,
-) -> dict | None:
-    """Poll RunPod job until completion or timeout."""
-    url = f"https://api.runpod.ai/v2/{endpoint_id}/status/{job_id}"
-    headers = {"Authorization": f"Bearer {api_key}"}
-    start_time = time.time()
-    last_status = None
-    queue_timeout = 300  # Cancel job if stuck in queue for 5 min
-    queue_start = time.time()
-
-    while time.time() - start_time < timeout:
-        try:
-            response = requests.get(
-                url,
-                headers=headers,
-                timeout=30,
-            )
-
-            if response.status_code != 200:
-                print(f"Status check failed: HTTP {response.status_code}", file=sys.stderr)
-                time.sleep(poll_interval)
-                continue
-
-            data = response.json()
-            status = data.get("status")
-
-            if verbose and status != last_status:
-                elapsed = int(time.time() - start_time)
-                print(f"  [{elapsed}s] Status: {status}", file=sys.stderr)
-                last_status = status
-
-            if status == "COMPLETED":
-                return data
-            elif status == "FAILED":
-                print(f"Job failed: {data.get('error', 'Unknown error')}", file=sys.stderr)
-                return data
-
-            # Track queue-to-progress transition
-            if status == "IN_PROGRESS" and queue_start is not None:
-                queue_start = None
-
-            # Cancel jobs stuck in queue too long (prevents runaway billing)
-            if status == "IN_QUEUE" and queue_start is not None and (time.time() - queue_start > queue_timeout):
-                print(f"Job stuck in queue for {queue_timeout}s — cancelling to prevent runaway charges", file=sys.stderr)
-                cancel_url = f"https://api.runpod.ai/v2/{endpoint_id}/cancel/{job_id}"
-                try:
-                    requests.post(cancel_url, headers=headers, timeout=10)
-                except Exception:
-                    pass
-                return {"status": "FAILED", "error": f"Cancelled: no GPU available after {queue_timeout}s in queue"}
-
-            time.sleep(poll_interval)
-
-        except Exception as e:
-            print(f"Status check error: {e}", file=sys.stderr)
-            time.sleep(poll_interval)
-
-    # Overall timeout — cancel the job so it doesn't linger in RunPod's queue
-    print(f"Job timed out after {timeout}s — cancelling on RunPod", file=sys.stderr)
-    cancel_url = f"https://api.runpod.ai/v2/{endpoint_id}/cancel/{job_id}"
-    try:
-        requests.post(cancel_url, headers=headers, timeout=10)
-    except Exception:
-        pass
-    return None
-
-
-def download_from_url(url: str, output_path: str, verbose: bool = True) -> bool:
-    """Download file from URL to local path."""
-    try:
-        if verbose:
-            print(f"Downloading result...", file=sys.stderr)
-
-        response = requests.get(url, stream=True, timeout=300)
-        response.raise_for_status()
-
-        with open(output_path, 'wb') as f:
-            for chunk in response.iter_content(chunk_size=8192):
-                f.write(chunk)
-
-        if verbose:
-            size_kb = Path(output_path).stat().st_size // 1024
-            print(f"  Downloaded: {output_path} ({size_kb}KB)", file=sys.stderr)
-
-        return True
-
-    except Exception as e:
-        print(f"Download error: {e}", file=sys.stderr)
-        return False
-
-
 def retrieve_job_result(
     job_id: str,
     output_path: str,
@@ -411,8 +90,11 @@ def retrieve_job_result(
     """Retrieve results from a completed RunPod job.
 
     Use this if a previous run timed out but the job completed on the server.
+    RunPod-specific (job retrieval is a RunPod concept).
     """
-    config = get_runpod_config()
+    from cloud_gpu import get_provider_config
+
+    config = get_provider_config("runpod", "sadtalker")
     api_key = config.get("api_key")
     endpoint_id = config.get("endpoint_id")
 
@@ -424,7 +106,6 @@ def retrieve_job_result(
     if verbose:
         print(f"Retrieving job: {job_id}", file=sys.stderr)
 
-    # Get job status
     url = f"https://api.runpod.ai/v2/{endpoint_id}/status/{job_id}"
     try:
         response = requests.get(
@@ -447,11 +128,9 @@ def retrieve_job_result(
 
         output = data.get("output", {})
 
-        # Check for error in output
         if output.get("error"):
             return {"error": output["error"]}
 
-        # Get the video URL (presigned R2 URL)
         video_url = output.get("video_url") or output.get("r2_url")
         if not video_url:
             return {"error": "No video_url in job output. Job may have failed."}
@@ -459,7 +138,6 @@ def retrieve_job_result(
         if verbose:
             print(f"  Downloading from: {video_url[:80]}...", file=sys.stderr)
 
-        # Download the video
         if not download_from_url(video_url, output_path, verbose=verbose):
             return {"error": "Failed to download video"}
 
@@ -474,7 +152,7 @@ def retrieve_job_result(
         return {"error": f"Failed to retrieve job: {e}"}
 
 
-def process_with_runpod(
+def process_with_cloud(
     image_path: str,
     audio_path: str,
     output_path: str,
@@ -486,31 +164,13 @@ def process_with_runpod(
     pose_style: int = 0,
     timeout: int = 600,
     verbose: bool = True,
+    cloud: str = "runpod",
 ) -> dict:
-    """Process image+audio using RunPod serverless endpoint."""
-    start_time = time.time()
+    """Process image+audio using cloud GPU endpoint."""
     r2_keys_to_cleanup = []
 
-    # Get RunPod config
-    config = get_runpod_config()
-    api_key = config.get("api_key")
-    endpoint_id = config.get("endpoint_id")
-
-    if not api_key:
-        return {"error": "RUNPOD_API_KEY not set. Add to .env file."}
-    if not endpoint_id:
-        return {"error": "RUNPOD_SADTALKER_ENDPOINT_ID not set. Run with --setup first."}
-
-    # Get R2 config (optional but recommended)
-    sys.path.insert(0, str(Path(__file__).parent))
-    try:
-        from config import get_r2_config
-        r2_config = get_r2_config()
-    except ImportError:
-        r2_config = None
-
-    if not r2_config:
-        print("Warning: R2 not configured. Video will be returned as base64.", file=sys.stderr)
+    if verbose:
+        print(f"Cloud provider: {cloud}", file=sys.stderr)
 
     # Auto-calculate timeout if not specified
     if timeout <= 0:
@@ -520,12 +180,9 @@ def process_with_runpod(
             if verbose:
                 print(f"Audio duration: {audio_duration:.1f}s, timeout: {timeout}s", file=sys.stderr)
         else:
-            timeout = 900  # Default 15 minutes if we can't determine duration
+            timeout = 900  # Default 15 minutes
             if verbose:
                 print(f"Could not determine audio duration, using default timeout: {timeout}s", file=sys.stderr)
-
-    if verbose:
-        print(f"Using RunPod endpoint: {endpoint_id}", file=sys.stderr)
 
     # Upload image
     image_url, image_r2_key = upload_to_storage(image_path, "sadtalker/input")
@@ -541,67 +198,55 @@ def process_with_runpod(
     if audio_r2_key:
         r2_keys_to_cleanup.append(audio_r2_key)
 
-    # Submit job
+    # Build payload
     if verbose:
         print(f"Submitting job (size={size}, enhancer={enhancer})...", file=sys.stderr)
 
-    job_response = submit_runpod_job(
-        endpoint_id=endpoint_id,
-        api_key=api_key,
-        image_url=image_url,
-        audio_url=audio_url,
-        still_mode=still_mode,
-        enhancer=enhancer,
-        preprocess=preprocess,
-        size=size,
-        expression_scale=expression_scale,
-        pose_style=pose_style,
-        r2_config=r2_config,
-    )
+    payload = {
+        "input": {
+            "image_url": image_url,
+            "audio_url": audio_url,
+            "still_mode": still_mode,
+            "enhancer": enhancer,
+            "preprocess": preprocess,
+            "size": size,
+            "expression_scale": expression_scale,
+            "pose_style": pose_style,
+        }
+    }
 
-    if not job_response:
-        return {"error": "Failed to submit job"}
+    r2_payload = get_r2_payload_config()
+    if r2_payload:
+        payload["input"]["r2"] = r2_payload
+    else:
+        print("Warning: R2 not configured. Video will be returned as base64.", file=sys.stderr)
 
-    job_id = job_response.get("id")
-    if not job_id:
-        return {"error": f"No job ID in response: {job_response}"}
+    # Call cloud GPU endpoint
+    from cloud_gpu import call_cloud_endpoint
 
-    if verbose:
-        print(f"Job submitted: {job_id}", file=sys.stderr)
-
-    # Poll for completion
-    result = poll_runpod_job(
-        endpoint_id=endpoint_id,
-        api_key=api_key,
-        job_id=job_id,
+    result, elapsed = call_cloud_endpoint(
+        provider=cloud,
+        payload=payload,
+        tool_name="sadtalker",
         timeout=timeout,
+        progress_label="Generating talking head",
         verbose=verbose,
     )
 
-    if not result:
-        return {"error": "Job timed out or failed to get status"}
-
-    status = result.get("status")
-    if status != "COMPLETED":
-        error = result.get("error") or result.get("output", {}).get("error") or "Unknown error"
-        return {"error": f"Job failed: {error}"}
-
-    # Get output from result
-    output = result.get("output", {})
-    if isinstance(output, dict) and output.get("error"):
-        return {"error": output["error"]}
+    if isinstance(result, dict) and result.get("error"):
+        return {"error": result["error"]}
 
     # Download result
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
     downloaded = False
 
-    output_r2_key = output.get("r2_key") if isinstance(output, dict) else None
-    output_url = output.get("video_url") if isinstance(output, dict) else None
+    output_r2_key = result.get("r2_key") if isinstance(result, dict) else None
+    output_url = result.get("video_url") if isinstance(result, dict) else None
 
     if output_r2_key:
         if verbose:
             print(f"Downloading result from R2...", file=sys.stderr)
-        downloaded = _download_from_r2(output_r2_key, output_path)
+        downloaded = download_from_r2(output_r2_key, output_path)
         if downloaded:
             r2_keys_to_cleanup.append(output_r2_key)
             if verbose:
@@ -613,9 +258,8 @@ def process_with_runpod(
 
     if not downloaded:
         # Try base64 fallback
-        video_base64 = output.get("video_base64")
+        video_base64 = result.get("video_base64")
         if video_base64:
-            import base64
             Path(output_path).write_bytes(base64.b64decode(video_base64))
             downloaded = True
             if verbose:
@@ -623,22 +267,18 @@ def process_with_runpod(
                 print(f"  Decoded from base64: {output_path} ({size_kb}KB)", file=sys.stderr)
 
     if not downloaded:
-        return {"error": f"No video in result: {list(output.keys()) if isinstance(output, dict) else output}"}
+        return {"error": f"No video in result: {list(result.keys()) if isinstance(result, dict) else result}"}
 
     # Cleanup R2 objects
-    if r2_keys_to_cleanup:
-        for key in r2_keys_to_cleanup:
-            _delete_from_r2(key)
-
-    elapsed = time.time() - start_time
+    for key in r2_keys_to_cleanup:
+        delete_from_r2(key)
 
     return {
         "success": True,
         "output": output_path,
-        "job_id": job_id,
         "processing_time_seconds": round(elapsed, 2),
-        "duration_seconds": output.get("duration_seconds"),
-        "chunks_processed": output.get("chunks_processed"),
+        "duration_seconds": result.get("duration_seconds"),
+        "chunks_processed": result.get("chunks_processed"),
     }
 
 
@@ -878,8 +518,9 @@ def setup_runpod(gpu_id: str = "AMPERE_24", verbose: bool = True) -> dict:
         "created_endpoint": False,
     }
 
-    config = get_runpod_config()
-    api_key = config.get("api_key")
+    from dotenv import load_dotenv
+    load_dotenv()
+    api_key = os.getenv("RUNPOD_API_KEY")
 
     if not api_key:
         result["error"] = "RUNPOD_API_KEY not set. Add to .env file first."
@@ -1035,18 +676,25 @@ Examples:
         help="Use a preset configuration (overrides other settings)",
     )
 
-    # RunPod options
+    # Cloud GPU options
+    parser.add_argument(
+        "--cloud",
+        type=str,
+        default="runpod",
+        choices=["runpod", "modal"],
+        help="Cloud GPU provider (default: runpod)",
+    )
     parser.add_argument(
         "--timeout",
         type=int,
         default=0,
-        help="RunPod job timeout in seconds (default: auto-calculated from audio duration)",
+        help="Job timeout in seconds (default: auto-calculated from audio duration)",
     )
     parser.add_argument(
         "--retrieve",
         type=str,
         metavar="JOB_ID",
-        help="Retrieve results from a completed job (e.g., if previous run timed out)",
+        help="Retrieve results from a completed RunPod job (e.g., if previous run timed out)",
     )
     parser.add_argument(
         "--setup",
@@ -1149,7 +797,7 @@ def main():
     if verbose:
         print("Generating talking head video with SadTalker...")
 
-    result = process_with_runpod(
+    result = process_with_cloud(
         image_path=args.image,
         audio_path=args.audio,
         output_path=args.output,
@@ -1161,6 +809,7 @@ def main():
         pose_style=pose_style,
         timeout=args.timeout,
         verbose=verbose,
+        cloud=args.cloud,
     )
 
     if result.get("error"):

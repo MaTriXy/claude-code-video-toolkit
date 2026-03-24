@@ -10,6 +10,18 @@ Unified command for video projects. Scans for existing projects and offers to re
 
 On invocation, scan for projects and adapt:
 
+### Step 0: Check Setup (first-time only)
+
+If `.env` does not exist or no cloud GPU provider is configured (no `MODAL_*_ENDPOINT_URL` or `RUNPOD_*_ENDPOINT_ID` values set):
+
+```
+Tip: Run /setup to configure AI voiceovers, image generation, and music.
+It takes ~5 minutes and most features are free. You can skip this and
+create videos with just Node.js — run /setup anytime later.
+```
+
+This is a one-line hint, not a blocker. Proceed to Step 1 immediately.
+
 ### Step 1: Scan Projects
 
 ```

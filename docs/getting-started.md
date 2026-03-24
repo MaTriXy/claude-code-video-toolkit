@@ -43,23 +43,23 @@ No API keys needed. Edit `src/config/sprint-config.ts` to customize content.
    cd claude-code-video-toolkit
    ```
 
-2. **Create environment file**
-   ```bash
-   cp .env.example .env
-   # Edit .env and add keys for the features you want (all optional)
-   ```
-
-3. **Install Python dependencies**
+2. **Install Python dependencies**
    ```bash
    python -m venv .venv
    source .venv/bin/activate  # On Windows: .venv\Scripts\activate
    pip install -r tools/requirements.txt
    ```
 
-4. **Start Claude Code**
+3. **Start Claude Code and run the setup wizard**
    ```bash
    claude
    ```
+   Then type `/setup` — this walks you through configuring cloud GPU, file transfer, and voice in about 5 minutes. Most features are free:
+   - **Cloudflare R2**: Free (10GB storage, zero egress)
+   - **Modal**: $30/month free compute on Starter plan
+   - **Qwen3-TTS**: Free AI voiceovers (runs on your Modal compute)
+
+   Or configure manually: `cp .env.example .env` and edit with your API keys.
 
 ## Your First Video
 
@@ -108,6 +108,7 @@ If you prefer manual setup:
 
 | Command | Description |
 |---------|-------------|
+| `/setup` | First-time setup - cloud GPU, file transfer, voice, prerequisites |
 | `/video` | Video projects - list, resume, or create new |
 | `/scene-review` | Scene-by-scene review in Remotion Studio |
 | `/design` | Focused design refinement session for a scene |

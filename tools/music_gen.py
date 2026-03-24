@@ -44,7 +44,6 @@ import base64
 import json
 import os
 import sys
-import time
 from pathlib import Path
 from typing import Optional
 
@@ -57,6 +56,9 @@ except ImportError as e:
     sys.exit(1)
 
 load_dotenv()
+
+sys.path.insert(0, str(Path(__file__).parent))
+from file_transfer import download_from_url, get_r2_payload_config
 
 # --- Constants ---
 
@@ -261,125 +263,6 @@ def encode_audio(path: str) -> str:
 
 # --- RunPod API ---
 
-def get_config() -> dict:
-    """Get RunPod configuration from environment."""
-    sys.path.insert(0, str(Path(__file__).parent))
-    try:
-        from config import get_runpod_api_key
-        api_key = get_runpod_api_key()
-    except ImportError:
-        api_key = os.getenv("RUNPOD_API_KEY")
-
-    endpoint_id = os.getenv(ENV_VAR_NAME)
-
-    return {
-        "api_key": api_key,
-        "endpoint_id": endpoint_id,
-    }
-
-
-def _get_r2_config() -> Optional[dict]:
-    """Get R2 config for file transfer. Returns None if not configured."""
-    sys.path.insert(0, str(Path(__file__).parent))
-    try:
-        from config import get_r2_config
-        return get_r2_config()
-    except ImportError:
-        return None
-
-
-def call_endpoint(payload: dict, timeout: int = 600) -> tuple[dict, float]:
-    """Call RunPod endpoint and return (result, elapsed_seconds)."""
-    config = get_config()
-    api_key = config.get("api_key")
-    endpoint_id = config.get("endpoint_id")
-
-    if not api_key:
-        return {"error": "RUNPOD_API_KEY not set in .env"}, 0
-    if not endpoint_id:
-        return {"error": f"{ENV_VAR_NAME} not set. Run with --setup first."}, 0
-
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json",
-    }
-
-    start = time.time()
-
-    try:
-        run_url = f"https://api.runpod.ai/v2/{endpoint_id}/run"
-        response = requests.post(run_url, json=payload, headers=headers, timeout=30)
-        response.raise_for_status()
-        result = response.json()
-
-        job_id = result.get("id")
-        status = result.get("status")
-
-        if status == "COMPLETED":
-            return result.get("output", result), time.time() - start
-
-        if status == "FAILED":
-            return {"error": result.get("error", "Unknown error")}, time.time() - start
-
-        # Poll for completion
-        log("Processing... (cold start may take 3-5 min on first run)", "warn")
-        status_url = f"https://api.runpod.ai/v2/{endpoint_id}/status/{job_id}"
-
-        poll_interval = 5
-        queue_timeout = 300
-        queue_start = time.time()
-        last_status = None
-        while time.time() - start < timeout:
-            time.sleep(poll_interval)
-            elapsed = time.time() - start
-
-            status_resp = requests.get(status_url, headers=headers, timeout=30)
-            status_data = status_resp.json()
-            status = status_data.get("status")
-
-            if status != last_status:
-                if status == "IN_PROGRESS":
-                    log(f"[{elapsed:.0f}s] Generating music...", "dim")
-                    queue_start = None
-                elif status == "IN_QUEUE":
-                    log(f"[{elapsed:.0f}s] Waiting for GPU...", "dim")
-                last_status = status
-
-            if status == "COMPLETED":
-                return status_data.get("output", status_data), time.time() - start
-
-            if status == "FAILED":
-                error = status_data.get("error", "Unknown error")
-                return {"error": error}, time.time() - start
-
-            if status in ("CANCELLED", "TIMED_OUT"):
-                return {"error": f"Job {status}"}, time.time() - start
-
-            # Cancel jobs stuck in queue
-            if status == "IN_QUEUE" and queue_start and (time.time() - queue_start > queue_timeout):
-                log(f"Job stuck in queue for {queue_timeout}s — cancelling", "warn")
-                cancel_url = f"https://api.runpod.ai/v2/{endpoint_id}/cancel/{job_id}"
-                try:
-                    requests.post(cancel_url, headers=headers, timeout=10)
-                except Exception:
-                    pass
-                return {"error": f"Cancelled: no GPU after {queue_timeout}s"}, time.time() - start
-
-        # Timeout
-        log("Polling timeout — cancelling job", "warn")
-        cancel_url = f"https://api.runpod.ai/v2/{endpoint_id}/cancel/{job_id}"
-        try:
-            requests.post(cancel_url, headers=headers, timeout=10)
-        except Exception:
-            pass
-        return {"error": "polling timeout (job cancelled)"}, time.time() - start
-
-    except requests.exceptions.Timeout:
-        return {"error": "timeout"}, time.time() - start
-    except Exception as e:
-        return {"error": str(e)}, time.time() - start
-
-
 # --- Generation functions ---
 
 def generate_music(
@@ -395,8 +278,9 @@ def generate_music(
     audio_format: str = "mp3",
     seed: Optional[int] = None,
     json_output: bool = False,
+    cloud: str = "runpod",
 ) -> Optional[dict]:
-    """Generate music from text prompt via RunPod."""
+    """Generate music from text prompt via cloud GPU."""
     log("ACE-Step 1.5 — Music Generation", "info")
     log("=" * 40, "dim")
     log(f"Prompt: {prompt[:80]}{'...' if len(prompt) > 80 else ''}", "info")
@@ -429,16 +313,19 @@ def generate_music(
         payload["input"]["seed"] = seed
 
     # R2 for file transfer
-    r2_config = _get_r2_config()
-    if r2_config:
-        payload["input"]["r2"] = {
-            "endpoint_url": r2_config["endpoint_url"],
-            "access_key_id": r2_config["access_key_id"],
-            "secret_access_key": r2_config["secret_access_key"],
-            "bucket_name": r2_config["bucket_name"],
-        }
+    r2_payload = get_r2_payload_config()
+    if r2_payload:
+        payload["input"]["r2"] = r2_payload
 
-    result, elapsed = call_endpoint(payload)
+    from cloud_gpu import call_cloud_endpoint
+
+    result, elapsed = call_cloud_endpoint(
+        provider=cloud,
+        payload=payload,
+        tool_name="music_gen",
+        timeout=600,
+        progress_label="Generating music",
+    )
 
     if "error" in result:
         log(f"Generation failed: {result['error']}", "error")
@@ -450,10 +337,7 @@ def generate_music(
 
     if "output_url" in result:
         log("Downloading from R2...", "dim")
-        resp = requests.get(result["output_url"], timeout=60)
-        resp.raise_for_status()
-        with open(output_path, "wb") as f:
-            f.write(resp.content)
+        download_from_url(result["output_url"], output_path, verbose=False)
     elif "audio_base64" in result:
         with open(output_path, "wb") as f:
             f.write(base64.b64decode(result["audio_base64"]))
@@ -501,6 +385,7 @@ def generate_cover(
     steps: int = 8,
     audio_format: str = "mp3",
     json_output: bool = False,
+    cloud: str = "runpod",
 ) -> Optional[dict]:
     """Generate a cover/style transfer from reference audio."""
     if not Path(reference_path).exists():
@@ -525,16 +410,19 @@ def generate_cover(
         }
     }
 
-    r2_config = _get_r2_config()
-    if r2_config:
-        payload["input"]["r2"] = {
-            "endpoint_url": r2_config["endpoint_url"],
-            "access_key_id": r2_config["access_key_id"],
-            "secret_access_key": r2_config["secret_access_key"],
-            "bucket_name": r2_config["bucket_name"],
-        }
+    r2_payload = get_r2_payload_config()
+    if r2_payload:
+        payload["input"]["r2"] = r2_payload
 
-    result, elapsed = call_endpoint(payload)
+    from cloud_gpu import call_cloud_endpoint
+
+    result, elapsed = call_cloud_endpoint(
+        provider=cloud,
+        payload=payload,
+        tool_name="music_gen",
+        timeout=600,
+        progress_label="Creating cover",
+    )
 
     if "error" in result:
         log(f"Cover failed: {result['error']}", "error")
@@ -543,10 +431,7 @@ def generate_cover(
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
 
     if "output_url" in result:
-        resp = requests.get(result["output_url"], timeout=60)
-        resp.raise_for_status()
-        with open(output_path, "wb") as f:
-            f.write(resp.content)
+        download_from_url(result["output_url"], output_path, verbose=False)
     elif "audio_base64" in result:
         with open(output_path, "wb") as f:
             f.write(base64.b64decode(result["audio_base64"]))
@@ -576,6 +461,7 @@ def extract_stem(
     steps: int = 8,
     audio_format: str = "mp3",
     json_output: bool = False,
+    cloud: str = "runpod",
 ) -> Optional[dict]:
     """Extract a stem (vocals, drums, bass, etc.) from mixed audio."""
     if not Path(input_path).exists():
@@ -597,16 +483,19 @@ def extract_stem(
         }
     }
 
-    r2_config = _get_r2_config()
-    if r2_config:
-        payload["input"]["r2"] = {
-            "endpoint_url": r2_config["endpoint_url"],
-            "access_key_id": r2_config["access_key_id"],
-            "secret_access_key": r2_config["secret_access_key"],
-            "bucket_name": r2_config["bucket_name"],
-        }
+    r2_payload = get_r2_payload_config()
+    if r2_payload:
+        payload["input"]["r2"] = r2_payload
 
-    result, elapsed = call_endpoint(payload)
+    from cloud_gpu import call_cloud_endpoint
+
+    result, elapsed = call_cloud_endpoint(
+        provider=cloud,
+        payload=payload,
+        tool_name="music_gen",
+        timeout=600,
+        progress_label="Extracting stem",
+    )
 
     if "error" in result:
         log(f"Extraction failed: {result['error']}", "error")
@@ -615,10 +504,7 @@ def extract_stem(
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
 
     if "output_url" in result:
-        resp = requests.get(result["output_url"], timeout=60)
-        resp.raise_for_status()
-        with open(output_path, "wb") as f:
-            f.write(resp.content)
+        download_from_url(result["output_url"], output_path, verbose=False)
     elif "audio_base64" in result:
         with open(output_path, "wb") as f:
             f.write(base64.b64decode(result["audio_base64"]))
@@ -859,8 +745,7 @@ def setup_runpod(gpu_id: str = "AMPERE_24,ADA_24", verbose: bool = True) -> dict
         "created_endpoint": False,
     }
 
-    config = get_config()
-    api_key = config.get("api_key")
+    api_key = os.getenv("RUNPOD_API_KEY")
 
     if not api_key:
         result["error"] = "RUNPOD_API_KEY not set. Add to .env file first."
@@ -1000,6 +885,11 @@ Examples:
                            help="Inference steps (default: 8 for turbo, use 32-64 for base model)")
     adv_group.add_argument("--seed", type=int, help="Random seed for reproducibility")
 
+    # Cloud provider
+    cloud_group = parser.add_argument_group("Cloud")
+    cloud_group.add_argument("--cloud", type=str, default="runpod", choices=["runpod", "modal"],
+                             help="Cloud GPU provider (default: runpod)")
+
     # Setup
     setup_group = parser.add_argument_group("Setup")
     setup_group.add_argument("--setup", action="store_true", help="Set up RunPod endpoint")
@@ -1052,6 +942,7 @@ Examples:
             steps=args.steps,
             audio_format=args.audio_format,
             json_output=args.json,
+            cloud=args.cloud,
         )
         if args.json and result:
             print(json.dumps(result, indent=2))
@@ -1089,6 +980,7 @@ Examples:
             steps=args.steps,
             audio_format=args.audio_format,
             json_output=args.json,
+            cloud=args.cloud,
         )
         if args.json and result:
             print(json.dumps(result, indent=2))
@@ -1167,6 +1059,7 @@ Examples:
         audio_format=args.audio_format,
         seed=args.seed,
         json_output=args.json,
+        cloud=args.cloud,
     )
 
     if args.json and result:

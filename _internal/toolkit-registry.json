@@ -157,6 +157,13 @@
       "status": "beta",
       "created": "2026-02-19",
       "updated": "2026-02-19"
+    },
+    "setup": {
+      "path": ".claude/commands/setup.md",
+      "description": "First-time toolkit setup - cloud GPU, file transfer, voice, and prerequisites",
+      "status": "beta",
+      "created": "2026-03-23",
+      "updated": "2026-03-23"
     }
   },
 
@@ -245,6 +252,14 @@
       "presets": ["notebooklm", "tiktok", "sora", "stock-br", "stock-bl", "stock-center"],
       "created": "2025-12-29",
       "updated": "2025-12-30"
+    },
+    "verify_setup": {
+      "path": "tools/verify_setup.py",
+      "description": "Verify toolkit setup - check prerequisites, cloud GPU, R2, and voice configuration",
+      "usage": "python tools/verify_setup.py [--test] [--json]",
+      "status": "beta",
+      "created": "2026-03-23",
+      "updated": "2026-03-23"
     },
     "notebooklm_brand": {
       "path": "tools/notebooklm_brand.py",
@@ -444,6 +459,65 @@
       },
       "created": "2025-12-30",
       "updated": "2026-03-22"
+    },
+    "modal": {
+      "name": "Modal",
+      "description": "Serverless GPU cloud with Python-native deployment and fast cold starts",
+      "documentation": "docs/modal-setup.md",
+      "envVars": ["MODAL_TOKEN_ID", "MODAL_TOKEN_SECRET"],
+      "endpoints": {
+        "qwen3-tts": {
+          "appFile": "docker/modal-qwen3-tts/app.py",
+          "envVar": "MODAL_QWEN3_TTS_ENDPOINT_URL",
+          "operations": ["qwen3_tts"],
+          "gpu": "A10G",
+          "estimatedCost": "$0.005-0.10 per generation"
+        },
+        "flux2": {
+          "appFile": "docker/modal-flux2/app.py",
+          "envVar": "MODAL_FLUX2_ENDPOINT_URL",
+          "operations": ["flux2"],
+          "gpu": "A10G",
+          "estimatedCost": "$0.01-0.03 per image"
+        },
+        "upscale": {
+          "appFile": "docker/modal-upscale/app.py",
+          "envVar": "MODAL_UPSCALE_ENDPOINT_URL",
+          "operations": ["upscale"],
+          "gpu": "A10G",
+          "estimatedCost": "$0.005-0.02 per image"
+        },
+        "image-edit": {
+          "appFile": "docker/modal-image-edit/app.py",
+          "envVar": "MODAL_IMAGE_EDIT_ENDPOINT_URL",
+          "operations": ["image_edit"],
+          "gpu": "A100",
+          "estimatedCost": "$0.02-0.05 per image"
+        },
+        "music-gen": {
+          "appFile": "docker/modal-music-gen/app.py",
+          "envVar": "MODAL_MUSIC_GEN_ENDPOINT_URL",
+          "operations": ["music_gen"],
+          "gpu": "A10G",
+          "estimatedCost": "$0.02-0.10 per generation"
+        },
+        "sadtalker": {
+          "appFile": "docker/modal-sadtalker/app.py",
+          "envVar": "MODAL_SADTALKER_ENDPOINT_URL",
+          "operations": ["sadtalker"],
+          "gpu": "A10G",
+          "estimatedCost": "$0.05-0.30 per video"
+        },
+        "dewatermark": {
+          "appFile": "docker/modal-propainter/app.py",
+          "envVar": "MODAL_DEWATERMARK_ENDPOINT_URL",
+          "operations": ["dewatermark"],
+          "gpu": "A10G",
+          "estimatedCost": "$0.05-0.50 per video"
+        }
+      },
+      "created": "2026-03-23",
+      "updated": "2026-03-23"
     }
   },
 

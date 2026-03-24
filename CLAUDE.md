@@ -39,6 +39,13 @@ claude-code-video-toolkit/
 
 ## Quick Start
 
+**First-time setup (optional, ~5 minutes):**
+```
+/setup
+```
+
+Walks through cloud GPU, file transfer (R2), and voice configuration. Most features are free. Skip this if you just want to render videos with Node.js.
+
 **Work on a video project:**
 ```
 /video
@@ -104,13 +111,19 @@ Audio, video, and image tools in `tools/`. See registry `tools` section for the 
 pip install -r tools/requirements.txt
 ```
 
+**Important: always invoke tools from the toolkit root directory.** When working inside a project (`projects/my-video/`), tool paths like `python3 tools/upscale.py` will fail because `tools/` is relative. Always use:
+```bash
+cd /path/to/claude-code-video-toolkit && python3 tools/upscale.py ...
+```
+This is especially critical for background commands where the working directory may not be obvious.
+
 ### Tool Categories
 
 | Type | Tools | When to Use |
 |------|-------|-------------|
 | **Project tools** | voiceover, music, music_gen, sfx, sync_timing | During video creation workflow |
 | **Utility tools** | redub, addmusic, notebooklm_brand, locate_watermark | Quick transformations on existing videos |
-| **Cloud GPU** | image_edit, upscale, dewatermark, sadtalker, qwen3_tts, music_gen | AI processing via RunPod |
+| **Cloud GPU** | image_edit, upscale, dewatermark, sadtalker, qwen3_tts, music_gen, flux2 | AI processing via RunPod or Modal (`--cloud runpod\|modal`) |
 
 Utility tools work on any video file without requiring a project structure.
 
@@ -150,27 +163,39 @@ python tools/qwen3_tts.py --list-tones    # neutral, warm, professional, excited
 
 Temperature controls expressiveness: `--temperature 1.2` (more expressive) or `--temperature 0.4` (more consistent).
 
-### AI Image Editing (Cloud GPU)
+### Cloud GPU Providers
 
-All Cloud GPU tools require a RunPod account. Use `--setup` to create endpoints automatically. See registry `cloudProviders.runpod.endpoints` for Docker images and env vars.
+All cloud GPU tools support two providers via `--cloud runpod|modal`. RunPod is the default. Modal was added as a reliability fallback after RunPod outages, and offers faster cold starts.
 
 ```bash
-# RunPod setup (one-time per tool)
+# --- RunPod setup (automated, one-time per tool) ---
 echo "RUNPOD_API_KEY=your_key_here" >> .env
 python tools/image_edit.py --setup
 python tools/upscale.py --setup
 python tools/qwen3_tts.py --setup
 python tools/music_gen.py --setup
 
+# --- Modal setup (deploy each app you need) ---
+pip install modal && python3 -m modal setup
+modal deploy docker/modal-upscale/app.py        # Then save URL to .env
+modal deploy docker/modal-image-edit/app.py
+# See docs/modal-setup.md for full guide
+```
+
+### AI Image Editing
+
+```bash
+
 # Image editing (Qwen-Image-Edit)
 python tools/image_edit.py --input photo.jpg --prompt "Add sunglasses"
+python tools/image_edit.py --input photo.jpg --prompt "Add sunglasses" --cloud modal
 python tools/image_edit.py --input photo.jpg --style cyberpunk
 python tools/image_edit.py --input photo.jpg --background office
 python tools/image_edit.py --list-presets  # Full preset list
 
 # Upscaling (RealESRGAN)
-python tools/upscale.py --input photo.jpg --output photo_4x.png --runpod
-python tools/upscale.py --input photo.jpg --scale 2 --model anime --face-enhance --runpod
+python tools/upscale.py --input photo.jpg --output photo_4x.png --cloud runpod
+python tools/upscale.py --input photo.jpg --scale 2 --model anime --face-enhance --cloud runpod
 ```
 
 See `docs/qwen-edit-patterns.md` and `.claude/skills/qwen-edit/` for prompting guidance.
@@ -409,6 +434,9 @@ const opacity = interpolate(frame, [0, 20], [0, 1], { extrapolateRight: 'clamp' 
 ```
 
 ### Media
+
+**Always use `<OffthreadVideo>`, never `<video>`** — Remotion requires its own video component for frame-accurate rendering. Using a raw `<video>` tag will not render correctly.
+
 ```tsx
 <OffthreadVideo src={staticFile('demo.mp4')} />
 <Audio src={staticFile('voiceover.mp3')} volume={1} />

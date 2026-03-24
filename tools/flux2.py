@@ -51,22 +51,8 @@ except ImportError as e:
 
 load_dotenv()
 
-def _get_r2_config() -> Optional[dict]:
-    """Get R2 config for result upload. Returns None if not configured."""
-    sys.path.insert(0, str(Path(__file__).parent))
-    try:
-        from config import get_r2_config
-        return get_r2_config()
-    except ImportError:
-        return None
-
-
-def _download_r2_result(url: str, output_path: str):
-    """Download result image from R2 presigned URL."""
-    response = requests.get(url, timeout=60)
-    response.raise_for_status()
-    with open(output_path, "wb") as f:
-        f.write(response.content)
+sys.path.insert(0, str(Path(__file__).parent))
+from file_transfer import download_from_url, get_r2_payload_config
 
 
 RUNPOD_GRAPHQL_URL = "https://api.runpod.io/graphql"
@@ -309,23 +295,6 @@ def log(msg: str, level: str = "info"):
     print(f"{color}{prefix.get(level, '->')} {msg}{reset}")
 
 
-def get_config() -> dict:
-    """Get RunPod configuration from environment."""
-    sys.path.insert(0, str(Path(__file__).parent))
-    try:
-        from config import get_runpod_api_key
-        api_key = get_runpod_api_key()
-    except ImportError:
-        api_key = os.getenv("RUNPOD_API_KEY")
-
-    endpoint_id = os.getenv(ENV_VAR_NAME)
-
-    return {
-        "api_key": api_key,
-        "endpoint_id": endpoint_id,
-    }
-
-
 def encode_image(path: str) -> str:
     """Encode image file to base64."""
     with open(path, "rb") as f:
@@ -338,98 +307,6 @@ def decode_and_save(base64_data: str, output_path: str):
         f.write(base64.b64decode(base64_data))
 
 
-def call_endpoint(payload: dict, timeout: int = 600) -> tuple[dict, float]:
-    """Call RunPod endpoint and return (result, elapsed_seconds)."""
-    config = get_config()
-    api_key = config.get("api_key")
-    endpoint_id = config.get("endpoint_id")
-
-    if not api_key:
-        return {"error": "RUNPOD_API_KEY not set in .env"}, 0
-    if not endpoint_id:
-        return {"error": f"{ENV_VAR_NAME} not set. Run with --setup first."}, 0
-
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json"
-    }
-
-    start = time.time()
-
-    try:
-        run_url = f"https://api.runpod.ai/v2/{endpoint_id}/run"
-        response = requests.post(run_url, json=payload, headers=headers, timeout=30)
-        response.raise_for_status()
-        result = response.json()
-
-        job_id = result.get("id")
-        status = result.get("status")
-
-        if status == "COMPLETED":
-            return result.get("output", result), time.time() - start
-
-        if status == "FAILED":
-            return {"error": result.get("error", "Unknown error")}, time.time() - start
-
-        # Poll for completion
-        log("Processing... (cold start may take 3-5 min on first run)", "warn")
-        status_url = f"https://api.runpod.ai/v2/{endpoint_id}/status/{job_id}"
-
-        poll_interval = 5
-        queue_timeout = 300  # Cancel job if stuck in queue for 5 min
-        queue_start = time.time()
-        last_status = None
-        while time.time() - start < timeout:
-            time.sleep(poll_interval)
-            elapsed = time.time() - start
-
-            status_resp = requests.get(status_url, headers=headers, timeout=30)
-            status_data = status_resp.json()
-            status = status_data.get("status")
-
-            if status != last_status:
-                if status == "IN_PROGRESS":
-                    log(f"[{elapsed:.0f}s] Generating...", "dim")
-                    queue_start = None  # No longer queued
-                elif status == "IN_QUEUE":
-                    log(f"[{elapsed:.0f}s] Waiting for GPU...", "dim")
-                last_status = status
-
-            if status == "COMPLETED":
-                return status_data.get("output", status_data), time.time() - start
-
-            if status == "FAILED":
-                error = status_data.get("error", "Unknown error")
-                return {"error": error}, time.time() - start
-
-            if status in ("CANCELLED", "TIMED_OUT"):
-                return {"error": f"Job {status}"}, time.time() - start
-
-            # Cancel jobs stuck in queue too long (prevents runaway billing)
-            if status == "IN_QUEUE" and queue_start and (time.time() - queue_start > queue_timeout):
-                log(f"Job stuck in queue for {queue_timeout}s — cancelling to prevent runaway charges", "warn")
-                cancel_url = f"https://api.runpod.ai/v2/{endpoint_id}/cancel/{job_id}"
-                try:
-                    requests.post(cancel_url, headers=headers, timeout=10)
-                except Exception:
-                    pass
-                return {"error": f"Cancelled: no GPU available after {queue_timeout}s in queue"}, time.time() - start
-
-        # Timeout — cancel the job so it doesn't linger in RunPod's queue
-        log("Polling timeout — cancelling job on RunPod", "warn")
-        cancel_url = f"https://api.runpod.ai/v2/{endpoint_id}/cancel/{job_id}"
-        try:
-            requests.post(cancel_url, headers=headers, timeout=10)
-        except Exception:
-            pass
-        return {"error": "polling timeout (job cancelled)"}, time.time() - start
-
-    except requests.exceptions.Timeout:
-        return {"error": "timeout"}, time.time() - start
-    except Exception as e:
-        return {"error": str(e)}, time.time() - start
-
-
 def generate_image(
     prompt: str,
     output_path: Optional[str] = None,
@@ -440,6 +317,7 @@ def generate_image(
     guidance: Optional[float] = None,
     open_result: bool = True,
     verbose: bool = False,
+    cloud: str = "runpod",
 ) -> Optional[str]:
     """
     Generate image from text prompt.
@@ -471,16 +349,24 @@ def generate_image(
     if guidance is not None:
         payload["input"]["guidance_scale"] = guidance
 
-    r2_config = _get_r2_config()
-    if r2_config:
-        payload["input"]["r2"] = {
-            "endpoint_url": r2_config["endpoint_url"],
-            "access_key_id": r2_config["access_key_id"],
-            "secret_access_key": r2_config["secret_access_key"],
-            "bucket_name": r2_config["bucket_name"],
-        }
+    r2_payload = get_r2_payload_config()
+    if r2_payload:
+        payload["input"]["r2"] = r2_payload
 
-    result, elapsed = call_endpoint(payload)
+    try:
+        from cloud_gpu import call_cloud_endpoint
+    except ImportError:
+        sys.path.insert(0, str(Path(__file__).parent))
+        from cloud_gpu import call_cloud_endpoint
+
+    result, elapsed = call_cloud_endpoint(
+        provider=cloud,
+        payload=payload,
+        tool_name="flux2",
+        timeout=600,
+        progress_label="Generating image",
+        verbose=True,
+    )
 
     if "error" in result:
         log(f"Generation failed: {result['error']}", "error")
@@ -488,7 +374,7 @@ def generate_image(
 
     if "output_url" in result:
         log("Downloading from R2...", "dim")
-        _download_r2_result(result["output_url"], output_path)
+        download_from_url(result["output_url"], output_path, verbose=False)
     else:
         decode_and_save(result["image_base64"], output_path)
 
@@ -499,10 +385,6 @@ def generate_image(
     log(f"Time: {elapsed:.1f}s total, {inference_ms/1000:.1f}s inference", "dim")
     log(f"Output: {output_size[0]}x{output_size[1]}", "dim")
     log(f"Seed: {result.get('seed', 'unknown')}", "dim")
-
-    if verbose:
-        cost = (elapsed / 3600) * 0.34
-        log(f"Est. cost: ${cost:.4f}", "dim")
 
     if open_result and sys.platform == "darwin":
         import subprocess
@@ -520,6 +402,7 @@ def edit_image(
     guidance: Optional[float] = None,
     open_result: bool = True,
     verbose: bool = False,
+    cloud: str = "runpod",
 ) -> Optional[str]:
     """
     Edit image(s) with the given prompt.
@@ -562,16 +445,24 @@ def edit_image(
     if guidance is not None:
         payload["input"]["guidance_scale"] = guidance
 
-    r2_config = _get_r2_config()
-    if r2_config:
-        payload["input"]["r2"] = {
-            "endpoint_url": r2_config["endpoint_url"],
-            "access_key_id": r2_config["access_key_id"],
-            "secret_access_key": r2_config["secret_access_key"],
-            "bucket_name": r2_config["bucket_name"],
-        }
+    r2_payload = get_r2_payload_config()
+    if r2_payload:
+        payload["input"]["r2"] = r2_payload
 
-    result, elapsed = call_endpoint(payload)
+    try:
+        from cloud_gpu import call_cloud_endpoint
+    except ImportError:
+        sys.path.insert(0, str(Path(__file__).parent))
+        from cloud_gpu import call_cloud_endpoint
+
+    result, elapsed = call_cloud_endpoint(
+        provider=cloud,
+        payload=payload,
+        tool_name="flux2",
+        timeout=600,
+        progress_label="Editing image",
+        verbose=True,
+    )
 
     if "error" in result:
         log(f"Edit failed: {result['error']}", "error")
@@ -579,7 +470,7 @@ def edit_image(
 
     if "output_url" in result:
         log("Downloading from R2...", "dim")
-        _download_r2_result(result["output_url"], output_path)
+        download_from_url(result["output_url"], output_path, verbose=False)
     else:
         decode_and_save(result["image_base64"], output_path)
 
@@ -590,10 +481,6 @@ def edit_image(
     log(f"Time: {elapsed:.1f}s total, {inference_ms/1000:.1f}s inference", "dim")
     log(f"Output: {output_size[0]}x{output_size[1]}", "dim")
     log(f"Seed: {result.get('seed', 'unknown')}", "dim")
-
-    if verbose:
-        cost = (elapsed / 3600) * 0.34
-        log(f"Est. cost: ${cost:.4f}", "dim")
 
     if open_result and sys.platform == "darwin":
         import subprocess
@@ -833,8 +720,7 @@ def setup_runpod(gpu_id: str = "AMPERE_24,ADA_24", verbose: bool = True) -> dict
         "created_endpoint": False,
     }
 
-    config = get_config()
-    api_key = config.get("api_key")
+    api_key = os.getenv("RUNPOD_API_KEY")
 
     if not api_key:
         result["error"] = "RUNPOD_API_KEY not set. Add to .env file first."
@@ -955,11 +841,13 @@ Examples:
     adv_group.add_argument("--guidance", "-g", type=float, help="Guidance scale (default: 1.0 for generate, 4.0 for edit)")
     adv_group.add_argument("--verbose", action="store_true", help="Show detailed output")
 
-    # Setup
-    setup_group = parser.add_argument_group("Setup")
-    setup_group.add_argument("--setup", action="store_true", help="Set up RunPod endpoint")
-    setup_group.add_argument("--setup-gpu", type=str, default="AMPERE_24,ADA_24",
-                             help="GPU type(s) for endpoint, comma-separated for fallback (default: AMPERE_24,ADA_24)")
+    # Cloud GPU
+    cloud_group = parser.add_argument_group("Cloud GPU")
+    cloud_group.add_argument("--cloud", type=str, default="runpod", choices=["runpod", "modal"],
+                             help="Cloud GPU provider (default: runpod)")
+    cloud_group.add_argument("--setup", action="store_true", help="Set up cloud endpoint")
+    cloud_group.add_argument("--setup-gpu", type=str, default="AMPERE_24,ADA_24",
+                             help="GPU type(s) for RunPod endpoint (default: AMPERE_24,ADA_24)")
 
     # Output format
     parser.add_argument("--json", action="store_true", help="Output result as JSON")
@@ -1013,6 +901,7 @@ Examples:
             guidance=args.guidance,
             open_result=not args.no_open,
             verbose=args.verbose,
+            cloud=args.cloud,
         )
     else:
         # Generate mode
@@ -1026,6 +915,7 @@ Examples:
             guidance=args.guidance,
             open_result=not args.no_open,
             verbose=args.verbose,
+            cloud=args.cloud,
         )
 
 

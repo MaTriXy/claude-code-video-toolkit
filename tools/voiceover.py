@@ -199,6 +199,15 @@ Examples:
         help="Qwen3-TTS nucleus sampling (default: model default ~0.8, range: 0.1-1.0)",
     )
 
+    # Cloud GPU provider (for Qwen3-TTS)
+    parser.add_argument(
+        "--cloud",
+        type=str,
+        default="runpod",
+        choices=["runpod", "modal"],
+        help="Cloud GPU provider for Qwen3-TTS (default: runpod)",
+    )
+
     # Brand integration
     parser.add_argument(
         "--brand",
@@ -311,6 +320,7 @@ def generate_single_audio_qwen3(
     ref_text: str | None = None,
     temperature: float | None = None,
     top_p: float | None = None,
+    cloud: str = "runpod",
 ) -> dict:
     """Generate a single audio file from script text using Qwen3-TTS. Returns result dict."""
     from qwen3_tts import generate_audio
@@ -328,6 +338,7 @@ def generate_single_audio_qwen3(
         verbose=False,
         temperature=temperature,
         top_p=top_p,
+        cloud=cloud,
     )
 
 
@@ -353,6 +364,7 @@ def process_scene_directory(
     ref_text: str | None = None,
     temperature: float | None = None,
     top_p: float | None = None,
+    cloud: str = "runpod",
 ) -> list[dict]:
     """Process all .txt files in directory, generate .mp3 for each."""
     txt_files = sorted(scene_dir.glob("*.txt"))
@@ -419,6 +431,7 @@ def process_scene_directory(
                     ref_text=ref_text,
                     temperature=temperature,
                     top_p=top_p,
+                    cloud=cloud,
                 )
             else:
                 result = generate_single_audio(
@@ -631,6 +644,7 @@ def main():
                 ref_text=args.ref_text,
                 temperature=args.temperature,
                 top_p=args.top_p,
+                cloud=args.cloud,
             )
             result = {
                 "dry_run": True,
@@ -684,6 +698,7 @@ def main():
             ref_text=args.ref_text,
             temperature=args.temperature,
             top_p=args.top_p,
+            cloud=args.cloud,
         )
 
         # Build final result
@@ -785,6 +800,7 @@ def main():
             ref_text=args.ref_text,
             temperature=args.temperature,
             top_p=args.top_p,
+            cloud=args.cloud,
         )
     else:
         result = generate_single_audio(

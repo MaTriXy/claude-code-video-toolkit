@@ -1,12 +1,16 @@
 #!/usr/bin/env python3
 """
-Generate speech using Qwen3-TTS (via RunPod serverless).
+Generate speech using Qwen3-TTS (via cloud GPU).
 
 Supports built-in speakers with emotion control and voice cloning from reference audio.
+Cloud providers: RunPod (default), Modal.
 
 Usage:
-    # Built-in speaker
+    # Built-in speaker (RunPod, default)
     python tools/qwen3_tts.py --text "Hello world" --speaker Ryan --output hello.mp3
+
+    # Using Modal instead of RunPod
+    python tools/qwen3_tts.py --text "Hello world" --cloud modal --output hello.mp3
 
     # With tone preset
     python tools/qwen3_tts.py --text "Hello world" --tone warm --output hello.mp3
@@ -23,18 +27,22 @@ Usage:
     # List built-in voices
     python tools/qwen3_tts.py --list-voices
 
-    # Setup endpoint
+    # Setup endpoint (RunPod)
     python tools/qwen3_tts.py --setup
 
-Setup:
-    1. Create account at runpod.io
-    2. Run: python tools/qwen3_tts.py --setup
-    3. Or manually deploy docker/runpod-qwen3-tts/ and add endpoint ID to .env
+    # Setup endpoint (Modal)
+    python tools/qwen3_tts.py --setup --cloud modal
 
-Cost:
-    - ~$0.005 per sentence
-    - ~$0.05-0.10 per page of text
-    - Uses RTX 4090 ($0.00074/sec) by default
+Setup:
+    RunPod:
+        1. Create account at runpod.io
+        2. Run: python tools/qwen3_tts.py --setup
+        3. Or manually deploy docker/runpod-qwen3-tts/ and add endpoint ID to .env
+
+    Modal:
+        1. pip install modal && python3 -m modal setup
+        2. Run: python tools/qwen3_tts.py --setup --cloud modal
+        3. Or manually: modal deploy docker/modal-qwen3-tts/app.py
 """
 
 import argparse
@@ -46,6 +54,8 @@ import time
 from pathlib import Path
 
 import requests
+
+sys.path.insert(0, str(Path(__file__).parent))
 
 # Docker image for RunPod endpoint
 QWEN3_TTS_DOCKER_IMAGE = "ghcr.io/conalmullan/video-toolkit-qwen3-tts:latest"
@@ -98,170 +108,10 @@ def resolve_tone(tone: str | None, instruct: str) -> str:
     return ""
 
 
-def get_runpod_config() -> dict:
-    """Get RunPod configuration from environment."""
-    sys.path.insert(0, str(Path(__file__).parent))
-    try:
-        from config import get_runpod_api_key
-        api_key = get_runpod_api_key()
-    except ImportError:
-        from dotenv import load_dotenv
-        load_dotenv()
-        api_key = os.getenv("RUNPOD_API_KEY")
-
-    from dotenv import load_dotenv
-    load_dotenv()
-    endpoint_id = os.getenv("RUNPOD_QWEN3_TTS_ENDPOINT_ID")
-
-    return {
-        "api_key": api_key,
-        "endpoint_id": endpoint_id,
-    }
-
-
-def _get_r2_client():
-    """Get boto3 S3 client configured for Cloudflare R2."""
-    sys.path.insert(0, str(Path(__file__).parent))
-    try:
-        from config import get_r2_config
-        r2_config = get_r2_config()
-    except ImportError:
-        r2_config = None
-
-    if not r2_config:
-        return None, None
-
-    try:
-        import boto3
-        from botocore.config import Config
-
-        client = boto3.client(
-            "s3",
-            endpoint_url=r2_config["endpoint_url"],
-            aws_access_key_id=r2_config["access_key_id"],
-            aws_secret_access_key=r2_config["secret_access_key"],
-            config=Config(signature_version="s3v4"),
-        )
-        return client, r2_config
-    except ImportError:
-        print("  boto3 not installed, skipping R2", file=sys.stderr)
-        return None, None
-
-
-def _upload_to_r2(file_path: str, prefix: str) -> tuple[str | None, str | None]:
-    """Upload to Cloudflare R2 and return presigned download URL."""
-    client, config = _get_r2_client()
-    if not client:
-        return None, None
-
-    import uuid
-    file_name = Path(file_path).name
-    object_key = f"{prefix}/{uuid.uuid4().hex[:8]}_{file_name}"
-
-    try:
-        client.upload_file(file_path, config["bucket_name"], object_key)
-
-        url = client.generate_presigned_url(
-            "get_object",
-            Params={"Bucket": config["bucket_name"], "Key": object_key},
-            ExpiresIn=7200,
-        )
-        return url, object_key
-    except Exception as e:
-        print(f"  R2 upload error: {e}", file=sys.stderr)
-        return None, None
-
-
-def _delete_from_r2(object_key: str) -> bool:
-    """Delete object from R2 after job completion."""
-    client, config = _get_r2_client()
-    if not client or not object_key:
-        return False
-
-    try:
-        client.delete_object(Bucket=config["bucket_name"], Key=object_key)
-        return True
-    except Exception:
-        return False
-
-
-def _download_from_r2(object_key: str, output_path: str) -> bool:
-    """Download object from R2 to local path."""
-    client, config = _get_r2_client()
-    if not client:
-        return False
-
-    try:
-        client.download_file(config["bucket_name"], object_key, output_path)
-        return True
-    except Exception as e:
-        print(f"  R2 download error: {e}", file=sys.stderr)
-        return False
-
-
-def upload_to_storage(file_path: str, prefix: str) -> tuple[str | None, str | None]:
-    """Upload a file to temporary storage for job input."""
-    file_size = Path(file_path).stat().st_size
-    file_name = Path(file_path).name
-
-    print(f"Uploading {file_name} ({file_size // 1024}KB)...", file=sys.stderr)
-
-    url, r2_key = _upload_to_r2(file_path, prefix)
-    if url:
-        print(f"  Upload complete (R2)", file=sys.stderr)
-        return url, r2_key
-
-    # Fall back to free services
-    for service_name, upload_func in [("litterbox", _upload_to_litterbox), ("0x0.st", _upload_to_0x0)]:
-        try:
-            url = upload_func(file_path, file_name)
-            if url:
-                print(f"  Upload complete ({service_name})", file=sys.stderr)
-                return url, None
-        except Exception as e:
-            print(f"  {service_name} failed: {e}", file=sys.stderr)
-            continue
-
-    print("All upload services failed", file=sys.stderr)
-    return None, None
-
-
-def _upload_to_litterbox(file_path: str, file_name: str) -> str | None:
-    """Upload to litterbox.catbox.moe (200MB limit, 24h retention)."""
-    import subprocess
-    result = subprocess.run(
-        [
-            "curl", "-s",
-            "-F", "reqtype=fileupload",
-            "-F", "time=24h",
-            "-F", f"fileToUpload=@{file_path}",
-            "https://litterbox.catbox.moe/resources/internals/api.php",
-        ],
-        capture_output=True,
-        text=True,
-        timeout=300,
-    )
-    if result.returncode == 0:
-        url = result.stdout.strip()
-        if url.startswith("http"):
-            return url
-    return None
-
-
-def _upload_to_0x0(file_path: str, file_name: str) -> str | None:
-    """Upload to 0x0.st (512MB limit, 30 day retention)."""
-    import subprocess
-    result = subprocess.run(
-        ["curl", "-s", "-F", f"file=@{file_path}", "https://0x0.st"],
-        capture_output=True,
-        text=True,
-        timeout=300,
-    )
-    if result.returncode == 0:
-        url = result.stdout.strip()
-        if url.startswith("http"):
-            return url
-    return None
+from file_transfer import (
+    upload_to_storage, download_from_r2, delete_from_r2,
+    download_from_url, get_r2_payload_config,
+)
 
 
 def get_audio_duration(file_path: str) -> float | None:
@@ -285,24 +135,61 @@ def get_audio_duration(file_path: str) -> float | None:
     return None
 
 
-def submit_runpod_job(
-    endpoint_id: str,
-    api_key: str,
+
+def generate_audio(
     text: str,
-    mode: str = "custom_voice",
+    output_path: str,
     speaker: str = "Ryan",
     language: str = "Auto",
     instruct: str = "",
-    ref_audio_url: str | None = None,
+    ref_audio: str | None = None,
     ref_text: str | None = None,
     output_format: str = "mp3",
-    r2_config: dict | None = None,
+    timeout: int = 300,
+    verbose: bool = True,
     temperature: float | None = None,
     top_p: float | None = None,
-) -> dict | None:
-    """Submit a Qwen3-TTS job to RunPod serverless endpoint."""
-    url = f"https://api.runpod.ai/v2/{endpoint_id}/run"
+    cloud: str = "runpod",
+) -> dict:
+    """Generate audio using Qwen3-TTS via cloud GPU.
 
+    This is the main entry point, importable by voiceover.py.
+    Returns dict with: success, output, duration_seconds, duration_frames_30fps
+
+    Args:
+        cloud: Cloud provider — "runpod" (default) or "modal".
+    """
+    start_time = time.time()
+    r2_keys_to_cleanup = []
+
+    # Get R2 config (used for file transfer regardless of cloud provider)
+    r2_payload = get_r2_payload_config()
+
+    # Determine mode
+    mode = "clone" if ref_audio else "custom_voice"
+
+    # Upload reference audio for clone mode
+    ref_audio_url = None
+    if mode == "clone":
+        if not Path(ref_audio).exists():
+            return {"success": False, "error": f"Reference audio not found: {ref_audio}"}
+        if not ref_text:
+            return {"success": False, "error": "ref_text is required for voice cloning"}
+
+        ref_audio_url, ref_r2_key = upload_to_storage(ref_audio, "qwen3-tts/input")
+        if not ref_audio_url:
+            return {"success": False, "error": "Failed to upload reference audio"}
+        if ref_r2_key:
+            r2_keys_to_cleanup.append(ref_r2_key)
+
+    if verbose:
+        print(f"Cloud provider: {cloud}", file=sys.stderr)
+        if mode == "clone":
+            print(f"Mode: voice clone", file=sys.stderr)
+        else:
+            print(f"Speaker: {speaker}, Language: {language}", file=sys.stderr)
+
+    # Build payload (same format for both providers)
     payload = {
         "input": {
             "text": text,
@@ -325,239 +212,26 @@ def submit_runpod_job(
     if top_p is not None:
         payload["input"]["top_p"] = top_p
 
-    if r2_config:
-        payload["input"]["r2"] = {
-            "endpoint_url": r2_config["endpoint_url"],
-            "access_key_id": r2_config["access_key_id"],
-            "secret_access_key": r2_config["secret_access_key"],
-            "bucket_name": r2_config["bucket_name"],
-        }
+    if r2_payload:
+        payload["input"]["r2"] = r2_payload
 
+    # Submit job via cloud_gpu abstraction
     try:
-        response = requests.post(
-            url,
-            json=payload,
-            headers={"Authorization": f"Bearer {api_key}"},
-            timeout=30,
-        )
-
-        if response.status_code == 200:
-            return response.json()
-        else:
-            print(f"Job submission failed: HTTP {response.status_code}", file=sys.stderr)
-            print(f"  Response: {response.text[:500]}", file=sys.stderr)
-            return None
-
-    except Exception as e:
-        print(f"Job submission error: {e}", file=sys.stderr)
-        return None
-
-
-def poll_runpod_job(
-    endpoint_id: str,
-    api_key: str,
-    job_id: str,
-    timeout: int = 300,
-    poll_interval: int = 3,
-    verbose: bool = True,
-) -> dict | None:
-    """Poll RunPod job until completion or timeout."""
-    url = f"https://api.runpod.ai/v2/{endpoint_id}/status/{job_id}"
-    headers = {"Authorization": f"Bearer {api_key}"}
-    start_time = time.time()
-    last_status = None
-    queue_timeout = 300  # Cancel job if stuck in queue for 5 min
-    queue_start = time.time()
-
-    while time.time() - start_time < timeout:
-        try:
-            response = requests.get(
-                url,
-                headers=headers,
-                timeout=30,
-            )
-
-            if response.status_code != 200:
-                print(f"Status check failed: HTTP {response.status_code}", file=sys.stderr)
-                time.sleep(poll_interval)
-                continue
-
-            data = response.json()
-            status = data.get("status")
-
-            if verbose and status != last_status:
-                elapsed = int(time.time() - start_time)
-                print(f"  [{elapsed}s] Status: {status}", file=sys.stderr)
-                last_status = status
-
-            if status == "COMPLETED":
-                return data
-            elif status == "FAILED":
-                print(f"Job failed: {data.get('error', 'Unknown error')}", file=sys.stderr)
-                return data
-
-            # Track queue-to-progress transition
-            if status == "IN_PROGRESS" and queue_start is not None:
-                queue_start = None
-
-            # Cancel jobs stuck in queue too long (prevents runaway billing)
-            if status == "IN_QUEUE" and queue_start is not None and (time.time() - queue_start > queue_timeout):
-                print(f"Job stuck in queue for {queue_timeout}s — cancelling to prevent runaway charges", file=sys.stderr)
-                cancel_url = f"https://api.runpod.ai/v2/{endpoint_id}/cancel/{job_id}"
-                try:
-                    requests.post(cancel_url, headers=headers, timeout=10)
-                except Exception:
-                    pass
-                return {"status": "FAILED", "error": f"Cancelled: no GPU available after {queue_timeout}s in queue"}
-
-            time.sleep(poll_interval)
-
-        except Exception as e:
-            print(f"Status check error: {e}", file=sys.stderr)
-            time.sleep(poll_interval)
-
-    # Overall timeout — cancel the job so it doesn't linger in RunPod's queue
-    print(f"Job timed out after {timeout}s — cancelling on RunPod", file=sys.stderr)
-    cancel_url = f"https://api.runpod.ai/v2/{endpoint_id}/cancel/{job_id}"
-    try:
-        requests.post(cancel_url, headers=headers, timeout=10)
-    except Exception:
-        pass
-    return None
-
-
-def download_from_url(url: str, output_path: str, verbose: bool = True) -> bool:
-    """Download file from URL to local path."""
-    try:
-        if verbose:
-            print(f"Downloading result...", file=sys.stderr)
-
-        response = requests.get(url, stream=True, timeout=300)
-        response.raise_for_status()
-
-        with open(output_path, 'wb') as f:
-            for chunk in response.iter_content(chunk_size=8192):
-                f.write(chunk)
-
-        if verbose:
-            size_kb = Path(output_path).stat().st_size // 1024
-            print(f"  Downloaded: {output_path} ({size_kb}KB)", file=sys.stderr)
-
-        return True
-
-    except Exception as e:
-        print(f"Download error: {e}", file=sys.stderr)
-        return False
-
-
-def generate_audio(
-    text: str,
-    output_path: str,
-    speaker: str = "Ryan",
-    language: str = "Auto",
-    instruct: str = "",
-    ref_audio: str | None = None,
-    ref_text: str | None = None,
-    output_format: str = "mp3",
-    timeout: int = 300,
-    verbose: bool = True,
-    temperature: float | None = None,
-    top_p: float | None = None,
-) -> dict:
-    """Generate audio using Qwen3-TTS via RunPod.
-
-    This is the main entry point, importable by voiceover.py.
-    Returns dict with: success, output, duration_seconds, duration_frames_30fps
-    """
-    start_time = time.time()
-    r2_keys_to_cleanup = []
-
-    config = get_runpod_config()
-    api_key = config.get("api_key")
-    endpoint_id = config.get("endpoint_id")
-
-    if not api_key:
-        return {"success": False, "error": "RUNPOD_API_KEY not set. Add to .env file."}
-    if not endpoint_id:
-        return {"success": False, "error": "RUNPOD_QWEN3_TTS_ENDPOINT_ID not set. Run with --setup first."}
-
-    # Get R2 config
-    sys.path.insert(0, str(Path(__file__).parent))
-    try:
-        from config import get_r2_config
-        r2_config = get_r2_config()
+        from cloud_gpu import call_cloud_endpoint
     except ImportError:
-        r2_config = None
+        sys.path.insert(0, str(Path(__file__).parent))
+        from cloud_gpu import call_cloud_endpoint
 
-    # Determine mode
-    mode = "clone" if ref_audio else "custom_voice"
-
-    # Upload reference audio for clone mode
-    ref_audio_url = None
-    if mode == "clone":
-        if not Path(ref_audio).exists():
-            return {"success": False, "error": f"Reference audio not found: {ref_audio}"}
-        if not ref_text:
-            return {"success": False, "error": "ref_text is required for voice cloning"}
-
-        ref_audio_url, ref_r2_key = upload_to_storage(ref_audio, "qwen3-tts/input")
-        if not ref_audio_url:
-            return {"success": False, "error": "Failed to upload reference audio"}
-        if ref_r2_key:
-            r2_keys_to_cleanup.append(ref_r2_key)
-
-    if verbose:
-        print(f"Using RunPod endpoint: {endpoint_id}", file=sys.stderr)
-        if mode == "clone":
-            print(f"Mode: voice clone", file=sys.stderr)
-        else:
-            print(f"Speaker: {speaker}, Language: {language}", file=sys.stderr)
-
-    # Submit job
-    job_response = submit_runpod_job(
-        endpoint_id=endpoint_id,
-        api_key=api_key,
-        text=text,
-        mode=mode,
-        speaker=speaker,
-        language=language,
-        instruct=instruct,
-        ref_audio_url=ref_audio_url,
-        ref_text=ref_text,
-        output_format=output_format,
-        r2_config=r2_config,
-        temperature=temperature,
-        top_p=top_p,
-    )
-
-    if not job_response:
-        return {"success": False, "error": "Failed to submit job"}
-
-    job_id = job_response.get("id")
-    if not job_id:
-        return {"success": False, "error": f"No job ID in response: {job_response}"}
-
-    if verbose:
-        print(f"Job submitted: {job_id}", file=sys.stderr)
-
-    # Poll for completion
-    result = poll_runpod_job(
-        endpoint_id=endpoint_id,
-        api_key=api_key,
-        job_id=job_id,
+    output, elapsed = call_cloud_endpoint(
+        provider=cloud,
+        payload=payload,
+        tool_name="qwen3_tts",
         timeout=timeout,
+        poll_interval=3,
+        progress_label="Generating speech",
         verbose=verbose,
     )
 
-    if not result:
-        return {"success": False, "error": "Job timed out or failed to get status"}
-
-    status = result.get("status")
-    if status != "COMPLETED":
-        error = result.get("error") or result.get("output", {}).get("error") or "Unknown error"
-        return {"success": False, "error": f"Job failed: {error}"}
-
-    output = result.get("output", {})
     if isinstance(output, dict) and output.get("error"):
         return {"success": False, "error": output["error"]}
 
@@ -571,7 +245,7 @@ def generate_audio(
     if output_r2_key:
         if verbose:
             print(f"Downloading result from R2...", file=sys.stderr)
-        downloaded = _download_from_r2(output_r2_key, output_path)
+        downloaded = download_from_r2(output_r2_key, output_path)
         if downloaded:
             r2_keys_to_cleanup.append(output_r2_key)
             if verbose:
@@ -595,7 +269,7 @@ def generate_audio(
 
     # Cleanup R2 objects
     for key in r2_keys_to_cleanup:
-        _delete_from_r2(key)
+        delete_from_r2(key)
 
     duration = get_audio_duration(output_path)
 
@@ -847,8 +521,9 @@ def setup_runpod(gpu_id: str = "AMPERE_24", verbose: bool = True) -> dict:
         "created_endpoint": False,
     }
 
-    config = get_runpod_config()
-    api_key = config.get("api_key")
+    from dotenv import load_dotenv
+    load_dotenv()
+    api_key = os.getenv("RUNPOD_API_KEY")
 
     if not api_key:
         result["error"] = "RUNPOD_API_KEY not set. Add to .env file first."
@@ -921,14 +596,172 @@ def setup_runpod(gpu_id: str = "AMPERE_24", verbose: bool = True) -> dict:
     return result
 
 
+# =============================================================================
+# Modal Setup
+# =============================================================================
+
+def setup_modal(verbose: bool = True) -> dict:
+    """Set up Modal endpoint for Qwen3-TTS.
+
+    Deploys the Modal app and saves the endpoint URL to .env.
+    Requires: pip install modal && python3 -m modal setup
+    """
+    import shutil
+    import subprocess
+
+    result = {
+        "success": False,
+        "endpoint_url": None,
+    }
+
+    if verbose:
+        print("=" * 60)
+        print("Modal Setup (Qwen3-TTS Speech Generation)")
+        print("=" * 60)
+        print()
+
+    # Check modal CLI is installed
+    if not shutil.which("modal"):
+        result["error"] = (
+            "Modal CLI not found. Install with:\n"
+            "  pip install modal\n"
+            "  python3 -m modal setup"
+        )
+        if verbose:
+            print(f"Error: {result['error']}", file=sys.stderr)
+        return result
+
+    # Find the app file
+    app_file = Path(__file__).parent.parent / "docker" / "modal-qwen3-tts" / "app.py"
+    if not app_file.exists():
+        result["error"] = f"Modal app file not found: {app_file}"
+        if verbose:
+            print(f"Error: {result['error']}", file=sys.stderr)
+        return result
+
+    if verbose:
+        print(f"[1/3] Deploying Modal app: {app_file}")
+        print("  This will build the container image and create the web endpoint.")
+        print("  First deploy may take 5-10 minutes (downloading model weights)...")
+        print()
+
+    try:
+        deploy_result = subprocess.run(
+            ["modal", "deploy", str(app_file)],
+            capture_output=True,
+            text=True,
+            timeout=900,  # 15 min for first deploy with model download
+        )
+
+        if deploy_result.returncode != 0:
+            result["error"] = f"Modal deploy failed:\n{deploy_result.stderr}"
+            if verbose:
+                print(f"Error: {result['error']}", file=sys.stderr)
+            return result
+
+        if verbose:
+            print(deploy_result.stdout)
+
+        # Parse endpoint URL from deploy output
+        # Modal prints lines like: Created web endpoint ... => https://workspace--app-name-fn.modal.run
+        endpoint_url = None
+        for line in deploy_result.stdout.splitlines():
+            if "modal.run" in line:
+                # Extract URL from the line
+                import re
+                urls = re.findall(r'https://[^\s"\']+modal\.run[^\s"\']*', line)
+                if urls:
+                    endpoint_url = urls[0]
+                    break
+
+        if not endpoint_url:
+            # Try stderr too (some modal versions output there)
+            for line in deploy_result.stderr.splitlines():
+                if "modal.run" in line:
+                    import re
+                    urls = re.findall(r'https://[^\s"\']+modal\.run[^\s"\']*', line)
+                    if urls:
+                        endpoint_url = urls[0]
+                        break
+
+        if not endpoint_url:
+            result["error"] = (
+                "Deploy succeeded but could not parse endpoint URL from output.\n"
+                "Check `modal app list` for the URL and add to .env manually:\n"
+                "  MODAL_QWEN3_TTS_ENDPOINT_URL=https://your-workspace--video-toolkit-qwen3-tts-qwen3tts-generate.modal.run"
+            )
+            if verbose:
+                print(f"Warning: {result['error']}", file=sys.stderr)
+            return result
+
+        result["endpoint_url"] = endpoint_url
+
+        if verbose:
+            print(f"[2/3] Endpoint URL: {endpoint_url}")
+            print("[3/3] Saving configuration...")
+
+        # Save to .env
+        env_path = Path(__file__).parent.parent / ".env"
+        env_var = "MODAL_QWEN3_TTS_ENDPOINT_URL"
+
+        if env_path.exists():
+            env_content = env_path.read_text()
+            if env_var in env_content:
+                # Update existing
+                lines = env_content.splitlines()
+                updated = False
+                for i, line in enumerate(lines):
+                    if line.startswith(f"{env_var}="):
+                        lines[i] = f"{env_var}={endpoint_url}"
+                        updated = True
+                        break
+                if updated:
+                    env_path.write_text("\n".join(lines) + "\n")
+            else:
+                with open(env_path, "a") as f:
+                    f.write(f"\n{env_var}={endpoint_url}\n")
+        else:
+            env_path.write_text(f"{env_var}={endpoint_url}\n")
+
+        if verbose:
+            print(f"  Saved: {env_var}={endpoint_url}")
+
+        result["success"] = True
+
+        if verbose:
+            print()
+            print("=" * 60)
+            print("Setup Complete!")
+            print("=" * 60)
+            print(f"Endpoint: {endpoint_url}")
+            print()
+            print("You can now run:")
+            print('  python tools/qwen3_tts.py --text "Hello world" --cloud modal --output hello.mp3')
+            print()
+
+    except subprocess.TimeoutExpired:
+        result["error"] = "Modal deploy timed out after 15 minutes"
+        if verbose:
+            print(f"Error: {result['error']}", file=sys.stderr)
+    except Exception as e:
+        result["error"] = str(e)
+        if verbose:
+            print(f"Error: {e}", file=sys.stderr)
+
+    return result
+
+
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="Generate speech using Qwen3-TTS (via RunPod)",
+        description="Generate speech using Qwen3-TTS (via cloud GPU)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Built-in speaker
+  # Built-in speaker (RunPod, default)
   python tools/qwen3_tts.py --text "Hello world" --speaker Ryan --output hello.mp3
+
+  # Using Modal instead
+  python tools/qwen3_tts.py --text "Hello world" --cloud modal --output hello.mp3
 
   # With emotion control
   python tools/qwen3_tts.py --text "Great news!" --instruct "Speak enthusiastically" --output excited.mp3
@@ -939,8 +772,11 @@ Examples:
   # List voices
   python tools/qwen3_tts.py --list-voices
 
-  # Setup endpoint
+  # Setup endpoint (RunPod)
   python tools/qwen3_tts.py --setup
+
+  # Setup endpoint (Modal)
+  python tools/qwen3_tts.py --setup --cloud modal
         """,
     )
 
@@ -1012,17 +848,24 @@ Examples:
         help="Nucleus sampling (default: model default ~0.8, range: 0.1-1.0)",
     )
 
-    # RunPod options
+    # Cloud GPU options
+    parser.add_argument(
+        "--cloud",
+        type=str,
+        default="runpod",
+        choices=["runpod", "modal"],
+        help="Cloud GPU provider (default: runpod)",
+    )
     parser.add_argument(
         "--timeout",
         type=int,
         default=300,
-        help="RunPod job timeout in seconds (default: 300)",
+        help="Job timeout in seconds (default: 300)",
     )
     parser.add_argument(
         "--setup",
         action="store_true",
-        help="Set up RunPod endpoint automatically",
+        help="Set up cloud endpoint automatically",
     )
     parser.add_argument(
         "--setup-gpu",
@@ -1090,7 +933,10 @@ def main():
 
     # Handle --setup
     if args.setup:
-        result = setup_runpod(gpu_id=args.setup_gpu, verbose=verbose)
+        if args.cloud == "modal":
+            result = setup_modal(verbose=verbose)
+        else:
+            result = setup_runpod(gpu_id=args.setup_gpu, verbose=verbose)
         if args.json:
             print(json.dumps(result, indent=2))
         if result.get("error"):
@@ -1147,6 +993,7 @@ def main():
         verbose=verbose,
         temperature=args.temperature,
         top_p=args.top_p,
+        cloud=args.cloud,
     )
 
     if not result.get("success"):

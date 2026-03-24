@@ -78,6 +78,30 @@ def get_qwen3_tts_endpoint_id() -> str | None:
     return os.getenv("RUNPOD_QWEN3_TTS_ENDPOINT_ID")
 
 
+def get_modal_token() -> tuple[str | None, str | None]:
+    """Get Modal authentication token from environment.
+
+    Returns (token_id, token_secret) tuple. Both are None if not configured.
+    Modal stores tokens in ~/.modal.toml after `modal setup`, but for
+    web endpoint auth we read from .env.
+    """
+    from dotenv import load_dotenv
+    load_dotenv()
+    return os.getenv("MODAL_TOKEN_ID"), os.getenv("MODAL_TOKEN_SECRET")
+
+
+def get_modal_endpoint_url(tool_name: str) -> str | None:
+    """Get Modal web endpoint URL for a tool.
+
+    Env var convention: MODAL_{TOOL}_ENDPOINT_URL
+    e.g., MODAL_QWEN3_TTS_ENDPOINT_URL, MODAL_FLUX2_ENDPOINT_URL
+    """
+    from dotenv import load_dotenv
+    load_dotenv()
+    env_var = f"MODAL_{tool_name.upper()}_ENDPOINT_URL"
+    return os.getenv(env_var)
+
+
 def get_brand_dir(brand_name: str) -> Path | None:
     """Get the directory for a brand profile."""
     brand_dir = find_workspace_root() / "brands" / brand_name

@@ -2,6 +2,8 @@
 """
 AI-powered image editing using Qwen-Image-Edit-2511.
 
+Cloud providers: RunPod (default), Modal.
+
 Capabilities:
 - Background replacement (--background)
 - Style transfer (--style)
@@ -20,11 +22,8 @@ Examples:
   # Custom prompt (full control)
   python tools/image_edit.py --input photo.jpg --prompt "Add warm sunset lighting"
 
-  # Multi-image merge (group photo)
-  python tools/image_edit.py --input person1.jpg person2.jpg --prompt "Both standing together in a park"
-
-  # Viewpoint change
-  python tools/image_edit.py --input photo.jpg --viewpoint "front facing"
+  # Using Modal instead of RunPod
+  python tools/image_edit.py --input photo.jpg --background "office" --cloud modal
 
   # Batch processing
   python tools/image_edit.py --input-dir ./photos --background "studio backdrop" --output-dir ./edited
@@ -37,43 +36,20 @@ import argparse
 import base64
 import io
 import json
-import os
 import sys
-import time
 from pathlib import Path
 from typing import Optional
 
 try:
     import requests
     from PIL import Image
-    from dotenv import load_dotenv
 except ImportError as e:
     print(f"Missing dependency: {e}")
-    print("Install with: pip install requests Pillow python-dotenv")
+    print("Install with: pip install requests Pillow")
     sys.exit(1)
 
-load_dotenv()
-
-RUNPOD_API_KEY = os.getenv("RUNPOD_API_KEY")
-QWEN_EDIT_ENDPOINT = os.getenv("RUNPOD_QWEN_EDIT_ENDPOINT_ID")
-
-
-def _get_r2_config() -> Optional[dict]:
-    """Get R2 config for result upload. Returns None if not configured."""
-    sys.path.insert(0, str(Path(__file__).parent))
-    try:
-        from config import get_r2_config
-        return get_r2_config()
-    except ImportError:
-        return None
-
-
-def _download_r2_result(url: str, output_path: str):
-    """Download result image from R2 presigned URL."""
-    response = requests.get(url, timeout=60)
-    response.raise_for_status()
-    with open(output_path, "wb") as f:
-        f.write(response.content)
+sys.path.insert(0, str(Path(__file__).parent))
+from file_transfer import download_from_url, get_r2_payload_config
 
 # Background presets
 BACKGROUND_PRESETS = {
@@ -180,99 +156,6 @@ def build_prompt(
     return prompt
 
 
-def call_endpoint(payload: dict, timeout: int = 600) -> tuple[dict, float]:
-    """Call RunPod endpoint and return (result, elapsed_seconds)."""
-    if not RUNPOD_API_KEY:
-        log("RUNPOD_API_KEY not set in .env", "error")
-        sys.exit(1)
-
-    if not QWEN_EDIT_ENDPOINT:
-        log("RUNPOD_QWEN_EDIT_ENDPOINT_ID not set in .env", "error")
-        log("Deploy the endpoint first, then add to .env", "info")
-        sys.exit(1)
-
-    headers = {
-        "Authorization": f"Bearer {RUNPOD_API_KEY}",
-        "Content-Type": "application/json"
-    }
-
-    start = time.time()
-
-    try:
-        # Submit async job
-        run_url = f"https://api.runpod.ai/v2/{QWEN_EDIT_ENDPOINT}/run"
-        response = requests.post(run_url, json=payload, headers=headers, timeout=30)
-        response.raise_for_status()
-        result = response.json()
-
-        job_id = result.get("id")
-        status = result.get("status")
-
-        if status == "COMPLETED":
-            return result.get("output", result), time.time() - start
-
-        if status == "FAILED":
-            return {"error": result.get("error", "Unknown error")}, time.time() - start
-
-        # Poll for completion
-        log(f"Processing... (cold start may take 5-10 min on first run)", "warn")
-        status_url = f"https://api.runpod.ai/v2/{QWEN_EDIT_ENDPOINT}/status/{job_id}"
-
-        poll_interval = 5
-        queue_timeout = 300  # Cancel job if stuck in queue for 5 min
-        queue_start = time.time()
-        last_status = None
-        while time.time() - start < timeout:
-            time.sleep(poll_interval)
-            elapsed = time.time() - start
-
-            status_resp = requests.get(status_url, headers=headers, timeout=30)
-            status_data = status_resp.json()
-            status = status_data.get("status")
-
-            if status != last_status:
-                if status == "IN_PROGRESS":
-                    log(f"[{elapsed:.0f}s] Generating...", "dim")
-                    queue_start = None  # No longer queued
-                elif status == "IN_QUEUE":
-                    log(f"[{elapsed:.0f}s] Waiting for GPU...", "dim")
-                last_status = status
-
-            if status == "COMPLETED":
-                return status_data.get("output", status_data), time.time() - start
-
-            if status == "FAILED":
-                error = status_data.get("error", "Unknown error")
-                return {"error": error}, time.time() - start
-
-            if status in ("CANCELLED", "TIMED_OUT"):
-                return {"error": f"Job {status}"}, time.time() - start
-
-            # Cancel jobs stuck in queue too long (prevents runaway billing)
-            if status == "IN_QUEUE" and queue_start and (time.time() - queue_start > queue_timeout):
-                log(f"Job stuck in queue for {queue_timeout}s — cancelling to prevent runaway charges", "warn")
-                cancel_url = f"https://api.runpod.ai/v2/{QWEN_EDIT_ENDPOINT}/cancel/{job_id}"
-                try:
-                    requests.post(cancel_url, headers=headers, timeout=10)
-                except Exception:
-                    pass
-                return {"error": f"Cancelled: no GPU available after {queue_timeout}s in queue"}, time.time() - start
-
-        # Timeout — cancel the job so it doesn't linger in RunPod's queue
-        log("Polling timeout — cancelling job on RunPod", "warn")
-        cancel_url = f"https://api.runpod.ai/v2/{QWEN_EDIT_ENDPOINT}/cancel/{job_id}"
-        try:
-            requests.post(cancel_url, headers=headers, timeout=10)
-        except Exception:
-            pass
-        return {"error": "polling timeout (job cancelled)"}, time.time() - start
-
-    except requests.exceptions.Timeout:
-        return {"error": "timeout"}, time.time() - start
-    except Exception as e:
-        return {"error": str(e)}, time.time() - start
-
-
 def edit_image(
     input_paths: list[str],
     prompt: str,
@@ -283,6 +166,7 @@ def edit_image(
     negative_prompt: Optional[str] = None,
     open_result: bool = True,
     verbose: bool = False,
+    cloud: str = "runpod",
 ) -> Optional[str]:
     """
     Edit image(s) with the given prompt.
@@ -329,17 +213,21 @@ def edit_image(
         payload["input"]["negative_prompt"] = negative_prompt
         log(f"Negative: {negative_prompt}", "dim")
 
-    r2_config = _get_r2_config()
-    if r2_config:
-        payload["input"]["r2"] = {
-            "endpoint_url": r2_config["endpoint_url"],
-            "access_key_id": r2_config["access_key_id"],
-            "secret_access_key": r2_config["secret_access_key"],
-            "bucket_name": r2_config["bucket_name"],
-        }
+    r2_payload = get_r2_payload_config()
+    if r2_payload:
+        payload["input"]["r2"] = r2_payload
 
-    # Call endpoint
-    result, elapsed = call_endpoint(payload)
+    # Call cloud GPU endpoint
+    from cloud_gpu import call_cloud_endpoint
+
+    result, elapsed = call_cloud_endpoint(
+        provider=cloud,
+        payload=payload,
+        tool_name="image_edit",
+        timeout=600,
+        progress_label="Editing image",
+        verbose=verbose,
+    )
 
     if "error" in result:
         log(f"Edit failed: {result['error']}", "error")
@@ -353,7 +241,7 @@ def edit_image(
     # Save result
     if "output_url" in result:
         log("Downloading from R2...", "dim")
-        _download_r2_result(result["output_url"], output_path)
+        download_from_url(result["output_url"], output_path, verbose=False)
     else:
         decode_and_save(result["edited_image_base64"], output_path)
 
@@ -365,11 +253,6 @@ def edit_image(
     log(f"Time: {elapsed:.1f}s total, {inference_ms/1000:.1f}s inference", "dim")
     log(f"Output: {output_size[0]}x{output_size[1]}", "dim")
     log(f"Seed: {result.get('seed', 'unknown')}", "dim")
-
-    if verbose:
-        # Estimate cost (L4 pricing)
-        cost = (elapsed / 3600) * 0.34
-        log(f"Est. cost: ${cost:.4f}", "dim")
 
     # Open result on macOS
     if open_result and sys.platform == "darwin":
@@ -386,6 +269,7 @@ def batch_edit(
     seed: Optional[int] = None,
     steps: int = 8,
     verbose: bool = False,
+    cloud: str = "runpod",
 ) -> tuple[int, int]:
     """
     Batch edit all images in a directory.
@@ -426,6 +310,7 @@ def batch_edit(
             steps=steps,
             open_result=False,
             verbose=verbose,
+            cloud=cloud,
         )
 
         if result:
@@ -493,6 +378,8 @@ Examples:
     adv_group.add_argument("--guidance", "-g", type=float, default=1.0, help="Guidance scale - higher = follows prompt more strictly (default: 1.0)")
     adv_group.add_argument("--negative", "-n", help="Negative prompt - things to avoid")
     adv_group.add_argument("--verbose", action="store_true", help="Show detailed output")
+    adv_group.add_argument("--cloud", type=str, default="runpod", choices=["runpod", "modal"],
+                           help="Cloud GPU provider (default: runpod)")
 
     # Utility
     parser.add_argument("--list-presets", action="store_true", help="List available presets")
@@ -541,6 +428,7 @@ Examples:
             seed=args.seed,
             steps=args.steps,
             verbose=args.verbose,
+            cloud=args.cloud,
         )
     else:
         edit_image(
@@ -553,6 +441,7 @@ Examples:
             negative_prompt=args.negative,
             open_result=not args.no_open,
             verbose=args.verbose,
+            cloud=args.cloud,
         )
 
 

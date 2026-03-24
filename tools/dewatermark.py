@@ -3,14 +3,17 @@
 Remove watermarks from video using AI inpainting (ProPainter).
 
 Supports both local processing (NVIDIA GPU required) and cloud processing
-via RunPod serverless GPUs.
+via RunPod or Modal serverless GPUs.
 
 Usage:
     # Local processing (requires NVIDIA GPU + ProPainter installation)
     python tools/dewatermark.py --input video.mp4 --region 1080,660,195,40 --output clean.mp4
 
-    # Cloud processing via RunPod (works from any machine)
-    python tools/dewatermark.py --input video.mp4 --region 1080,660,195,40 --output clean.mp4 --runpod
+    # Cloud processing via Modal (works from any machine)
+    python tools/dewatermark.py --input video.mp4 --region 1080,660,195,40 --output clean.mp4 --cloud modal
+
+    # Cloud processing via RunPod
+    python tools/dewatermark.py --input video.mp4 --region 1080,660,195,40 --output clean.mp4 --cloud runpod
 
     # Use custom mask image (white = area to remove, black = keep)
     python tools/dewatermark.py --input video.mp4 --mask mask.png --output clean.mp4
@@ -21,21 +24,20 @@ Usage:
     # Check installation status
     python tools/dewatermark.py --status
 
-RunPod Setup:
-    1. Create account at runpod.io
-    2. Deploy the propainter Docker image (see docker/runpod-propainter/)
-    3. Add to .env:
-       RUNPOD_API_KEY=your_key
-       RUNPOD_ENDPOINT_ID=your_endpoint
+Cloud Setup:
+    Modal:  pip install modal && python3 -m modal setup
+            modal deploy docker/modal-propainter/app.py
+    RunPod: See docker/runpod-propainter/ for deployment instructions
 
 Hardware (local mode):
     - NVIDIA GPU: Recommended (uses CUDA)
-    - Apple Silicon: NOT SUPPORTED (too slow, use --runpod instead)
-    - CPU-only: NOT SUPPORTED (too slow, use --runpod instead)
+    - Apple Silicon: NOT SUPPORTED (too slow, use --cloud instead)
+    - CPU-only: NOT SUPPORTED (too slow, use --cloud instead)
 
-Cost (RunPod):
+Cost:
     - ~$0.02-0.25 per video depending on length
-    - Uses RTX 3090 (~$0.34/hr) by default
+    - Modal: A10G GPU, scales to zero when idle
+    - RunPod: RTX 3090 (~$0.34/hr) by default
 """
 
 import argparse
@@ -49,6 +51,12 @@ import time
 from pathlib import Path
 
 import requests
+
+sys.path.insert(0, str(Path(__file__).parent))
+from file_transfer import (
+    upload_to_storage, download_from_r2, delete_from_r2,
+    download_from_url, get_r2_payload_config,
+)
 
 # Default installation path
 PROPAINTER_HOME = Path.home() / ".video-toolkit" / "propainter"
@@ -587,17 +595,25 @@ Examples:
         help="Keep intermediate files (frames, masks)",
     )
 
-    # RunPod cloud processing
+    # Cloud GPU processing
+    parser.add_argument(
+        "--cloud",
+        type=str,
+        default=None,
+        choices=["runpod", "modal"],
+        help="Cloud GPU provider (default: runpod)",
+    )
     parser.add_argument(
         "--runpod",
         action="store_true",
-        help="Process on RunPod serverless GPU instead of locally",
+        help="[Deprecated] Use --cloud runpod instead",
     )
     parser.add_argument(
-        "--runpod-timeout",
+        "--timeout", "--runpod-timeout",
         type=int,
         default=1800,
-        help="RunPod job timeout in seconds (default: 1800 = 30 min)",
+        dest="timeout",
+        help="Job timeout in seconds (default: 1800 = 30 min)",
     )
     parser.add_argument(
         "--setup",
@@ -971,384 +987,8 @@ def run_propainter(
 
 
 # =============================================================================
-# RunPod Cloud Processing
+# Cloud GPU Processing (RunPod + Modal)
 # =============================================================================
-
-def get_runpod_config() -> dict:
-    """Get RunPod configuration from environment."""
-    # Import here to avoid circular dependency and allow graceful failure
-    sys.path.insert(0, str(Path(__file__).parent))
-    try:
-        from config import get_runpod_api_key, get_runpod_endpoint_id
-        return {
-            "api_key": get_runpod_api_key(),
-            "endpoint_id": get_runpod_endpoint_id(),
-        }
-    except ImportError:
-        # Fallback to direct env var access
-        from dotenv import load_dotenv
-        load_dotenv()
-        return {
-            "api_key": os.getenv("RUNPOD_API_KEY"),
-            "endpoint_id": os.getenv("RUNPOD_ENDPOINT_ID"),
-        }
-
-
-def _get_r2_client():
-    """Get boto3 S3 client configured for Cloudflare R2."""
-    sys.path.insert(0, str(Path(__file__).parent))
-    try:
-        from config import get_r2_config
-        r2_config = get_r2_config()
-    except ImportError:
-        r2_config = None
-
-    if not r2_config:
-        return None, None
-
-    try:
-        import boto3
-        from botocore.config import Config
-
-        client = boto3.client(
-            "s3",
-            endpoint_url=r2_config["endpoint_url"],
-            aws_access_key_id=r2_config["access_key_id"],
-            aws_secret_access_key=r2_config["secret_access_key"],
-            config=Config(signature_version="s3v4"),
-        )
-        return client, r2_config
-    except ImportError:
-        print("  boto3 not installed, skipping R2", file=sys.stderr)
-        return None, None
-
-
-def _upload_to_r2(file_path: str, file_name: str) -> tuple[str | None, str | None]:
-    """
-    Upload to Cloudflare R2 and return presigned download URL.
-
-    Returns (url, object_key) tuple. object_key is needed for cleanup.
-    """
-    client, config = _get_r2_client()
-    if not client:
-        return None, None
-
-    import uuid
-    object_key = f"dewatermark/{uuid.uuid4().hex[:8]}_{file_name}"
-
-    try:
-        client.upload_file(file_path, config["bucket_name"], object_key)
-
-        # Generate presigned URL (valid for 2 hours)
-        url = client.generate_presigned_url(
-            "get_object",
-            Params={"Bucket": config["bucket_name"], "Key": object_key},
-            ExpiresIn=7200,
-        )
-        return url, object_key
-    except Exception as e:
-        print(f"  R2 upload error: {e}", file=sys.stderr)
-        return None, None
-
-
-def _delete_from_r2(object_key: str) -> bool:
-    """Delete object from R2 after job completion."""
-    client, config = _get_r2_client()
-    if not client or not object_key:
-        return False
-
-    try:
-        client.delete_object(Bucket=config["bucket_name"], Key=object_key)
-        return True
-    except Exception:
-        return False
-
-
-def _download_from_r2(object_key: str, output_path: str) -> bool:
-    """Download object from R2 to local path."""
-    client, config = _get_r2_client()
-    if not client:
-        return False
-
-    try:
-        client.download_file(config["bucket_name"], object_key, output_path)
-        return True
-    except Exception as e:
-        print(f"  R2 download error: {e}", file=sys.stderr)
-        return False
-
-
-def upload_to_runpod_storage(file_path: str, api_key: str) -> tuple[str | None, str | None]:
-    """
-    Upload a file to temporary storage for job input.
-
-    Returns (url, r2_key) tuple. r2_key is set if R2 was used (for cleanup).
-    Falls back to free file hosting services if R2 not configured.
-    """
-    file_size = Path(file_path).stat().st_size
-    file_name = Path(file_path).name
-
-    print(f"Uploading {file_name} ({file_size // (1024*1024)}MB)...", file=sys.stderr)
-
-    # Try R2 first if configured
-    url, r2_key = _upload_to_r2(file_path, file_name)
-    if url:
-        print(f"  Upload complete (R2): {url[:60]}...", file=sys.stderr)
-        return url, r2_key
-
-    # Fall back to free services
-    upload_services = [
-        ("litterbox", _upload_to_litterbox),
-        ("0x0.st", _upload_to_0x0),
-        ("file.io", _upload_to_fileio),
-        ("transfer.sh", _upload_to_transfersh),
-    ]
-
-    for service_name, upload_func in upload_services:
-        try:
-            url = upload_func(file_path, file_name)
-            if url:
-                print(f"  Upload complete ({service_name}): {url[:60]}...", file=sys.stderr)
-                return url, None  # No R2 key for cleanup
-        except Exception as e:
-            print(f"  {service_name} failed: {e}", file=sys.stderr)
-            continue
-
-    print("All upload services failed", file=sys.stderr)
-    return None, None
-
-
-def _upload_to_litterbox(file_path: str, file_name: str) -> str | None:
-    """Upload to litterbox.catbox.moe (200MB limit, 24h retention) using curl."""
-    result = subprocess.run(
-        [
-            "curl", "-s",
-            "-F", "reqtype=fileupload",
-            "-F", "time=24h",
-            "-F", f"fileToUpload=@{file_path}",
-            "https://litterbox.catbox.moe/resources/internals/api.php",
-        ],
-        capture_output=True,
-        text=True,
-        timeout=600,
-    )
-    if result.returncode == 0:
-        url = result.stdout.strip()
-        if url.startswith("http"):
-            return url
-        else:
-            raise Exception(f"Unexpected response: {url[:100]}")
-    else:
-        raise Exception(f"curl failed: {result.stderr[:100]}")
-
-
-def _upload_to_0x0(file_path: str, file_name: str) -> str | None:
-    """Upload to 0x0.st (512MB limit, 30 day retention) using curl."""
-    result = subprocess.run(
-        ["curl", "-s", "-F", f"file=@{file_path}", "https://0x0.st"],
-        capture_output=True,
-        text=True,
-        timeout=600,
-    )
-    if result.returncode == 0:
-        url = result.stdout.strip()
-        if url.startswith("http"):
-            return url
-        else:
-            raise Exception(f"Unexpected response: {url[:100]}")
-    else:
-        raise Exception(f"curl failed: {result.stderr[:100]}")
-
-
-def _upload_to_fileio(file_path: str, file_name: str) -> str | None:
-    """Upload to file.io (2GB limit, 1 download then deleted)."""
-    with open(file_path, 'rb') as f:
-        response = requests.post(
-            "https://file.io",
-            files={"file": (file_name, f)},
-            timeout=600,
-        )
-    if response.status_code == 200:
-        data = response.json()
-        if data.get("success"):
-            return data.get("link")
-    return None
-
-
-def _upload_to_transfersh(file_path: str, file_name: str) -> str | None:
-    """Upload to transfer.sh (10GB limit, 14 day retention)."""
-    with open(file_path, 'rb') as f:
-        response = requests.put(
-            f"https://transfer.sh/{file_name}",
-            data=f,
-            headers={"Max-Downloads": "5", "Max-Days": "1"},
-            timeout=600,
-        )
-    if response.status_code == 200:
-        return response.text.strip()
-    return None
-
-
-def submit_runpod_job(
-    endpoint_id: str,
-    api_key: str,
-    video_url: str,
-    region: str | None = None,
-    mask_url: str | None = None,
-    r2_config: dict | None = None,
-    resize_ratio: str | float = "auto",
-) -> dict | None:
-    """Submit a dewatermark job to RunPod serverless endpoint."""
-    url = f"https://api.runpod.ai/v2/{endpoint_id}/run"
-
-    # Handle resize_ratio: "auto" or numeric value
-    if resize_ratio == "auto":
-        ratio_value = "auto"
-    else:
-        ratio_value = float(resize_ratio)
-
-    payload = {
-        "input": {
-            "operation": "dewatermark",
-            "video_url": video_url,
-            "resize_ratio": ratio_value,
-        }
-    }
-
-    if region:
-        payload["input"]["region"] = region
-    if mask_url:
-        payload["input"]["mask_url"] = mask_url
-
-    # Pass R2 credentials for result upload (if configured)
-    if r2_config:
-        payload["input"]["r2"] = {
-            "endpoint_url": r2_config["endpoint_url"],
-            "access_key_id": r2_config["access_key_id"],
-            "secret_access_key": r2_config["secret_access_key"],
-            "bucket_name": r2_config["bucket_name"],
-        }
-
-    try:
-        response = requests.post(
-            url,
-            json=payload,
-            headers={"Authorization": f"Bearer {api_key}"},
-            timeout=30,
-        )
-
-        if response.status_code == 200:
-            return response.json()
-        else:
-            print(f"Job submission failed: HTTP {response.status_code}", file=sys.stderr)
-            print(f"  Response: {response.text[:500]}", file=sys.stderr)
-            return None
-
-    except Exception as e:
-        print(f"Job submission error: {e}", file=sys.stderr)
-        return None
-
-
-def poll_runpod_job(
-    endpoint_id: str,
-    api_key: str,
-    job_id: str,
-    timeout: int = 1800,
-    poll_interval: int = 5,
-    verbose: bool = True,
-) -> dict | None:
-    """Poll RunPod job until completion or timeout."""
-    url = f"https://api.runpod.ai/v2/{endpoint_id}/status/{job_id}"
-    headers = {"Authorization": f"Bearer {api_key}"}
-    start_time = time.time()
-    last_status = None
-    queue_timeout = 300  # Cancel job if stuck in queue for 5 min
-    queue_start = time.time()
-
-    while time.time() - start_time < timeout:
-        try:
-            response = requests.get(
-                url,
-                headers=headers,
-                timeout=30,
-            )
-
-            if response.status_code != 200:
-                print(f"Status check failed: HTTP {response.status_code}", file=sys.stderr)
-                time.sleep(poll_interval)
-                continue
-
-            data = response.json()
-            status = data.get("status")
-
-            # Log status changes
-            if verbose and status != last_status:
-                elapsed = int(time.time() - start_time)
-                print(f"  [{elapsed}s] Status: {status}", file=sys.stderr)
-                last_status = status
-
-            if status == "COMPLETED":
-                return data
-            elif status == "FAILED":
-                print(f"Job failed: {data.get('error', 'Unknown error')}", file=sys.stderr)
-                return data
-
-            # Track queue-to-progress transition
-            if status == "IN_PROGRESS" and queue_start is not None:
-                queue_start = None
-
-            # Cancel jobs stuck in queue too long (prevents runaway billing)
-            if status == "IN_QUEUE" and queue_start is not None and (time.time() - queue_start > queue_timeout):
-                print(f"Job stuck in queue for {queue_timeout}s — cancelling to prevent runaway charges", file=sys.stderr)
-                cancel_url = f"https://api.runpod.ai/v2/{endpoint_id}/cancel/{job_id}"
-                try:
-                    requests.post(cancel_url, headers=headers, timeout=10)
-                except Exception:
-                    pass
-                return {"status": "FAILED", "error": f"Cancelled: no GPU available after {queue_timeout}s in queue"}
-
-            time.sleep(poll_interval)
-
-        except Exception as e:
-            print(f"Status check error: {e}", file=sys.stderr)
-            time.sleep(poll_interval)
-
-    # Overall timeout — cancel the job so it doesn't linger in RunPod's queue
-    print(f"Job timed out after {timeout}s — cancelling on RunPod", file=sys.stderr)
-    cancel_url = f"https://api.runpod.ai/v2/{endpoint_id}/cancel/{job_id}"
-    try:
-        requests.post(cancel_url, headers=headers, timeout=10)
-    except Exception:
-        pass
-    return None
-
-
-def download_from_url(url: str, output_path: str, verbose: bool = True) -> bool:
-    """Download file from URL to local path."""
-    try:
-        if verbose:
-            print(f"Downloading result...", file=sys.stderr)
-
-        response = requests.get(url, stream=True, timeout=600)
-        response.raise_for_status()
-
-        total_size = int(response.headers.get('content-length', 0))
-        downloaded = 0
-
-        with open(output_path, 'wb') as f:
-            for chunk in response.iter_content(chunk_size=8192):
-                f.write(chunk)
-                downloaded += len(chunk)
-
-        if verbose:
-            size_mb = Path(output_path).stat().st_size // (1024 * 1024)
-            print(f"  Downloaded: {output_path} ({size_mb}MB)", file=sys.stderr)
-
-        return True
-
-    except Exception as e:
-        print(f"Download error: {e}", file=sys.stderr)
-        return False
 
 
 def resolve_preset_region(preset: str, width: int, height: int) -> str | None:
@@ -1378,20 +1018,11 @@ def suggest_resize_ratio(duration_seconds: float, width: int = 1280, height: int
     """
     Suggest a resize ratio based on video duration and resolution.
 
-    Based on empirical testing with 80GB A100:
-    - < 30s at 720p: 1.0 works (full resolution)
-    - 30-60s at 720p: 0.75 works
-    - 60-180s at 720p: 0.5 recommended
-    - > 180s at 720p: 0.5 + chunking recommended
-
     Returns (ratio, reason) tuple.
     """
-    # Adjust for resolution (720p is baseline)
     pixels = width * height
     pixels_720p = 1280 * 720
     resolution_factor = pixels / pixels_720p
-
-    # Effective duration accounting for resolution
     effective_duration = duration_seconds * resolution_factor
 
     if effective_duration <= 30:
@@ -1450,7 +1081,6 @@ def mux_audio_from_original(
 ) -> bool:
     """Mux audio from original video into processed video (ProPainter strips audio)."""
     try:
-        # Check if original has audio
         probe_cmd = [
             "ffprobe", "-v", "error", "-select_streams", "a",
             "-show_entries", "stream=codec_name", "-of", "json", original_video
@@ -1462,7 +1092,6 @@ def mux_audio_from_original(
         import json as json_module
         probe_data = json_module.loads(result.stdout)
         if not probe_data.get("streams"):
-            # No audio in original, just copy video
             if verbose:
                 print(f"  No audio in original, copying video only", file=sys.stderr)
             shutil.copy2(video_no_audio, output_path)
@@ -1471,7 +1100,6 @@ def mux_audio_from_original(
         if verbose:
             print(f"  Restoring audio from original...", file=sys.stderr)
 
-        # Mux audio from original into processed video
         cmd = [
             "ffmpeg", "-y",
             "-i", video_no_audio,
@@ -1490,7 +1118,7 @@ def mux_audio_from_original(
         return False
 
 
-def process_with_runpod(
+def process_with_cloud(
     input_path: str,
     output_path: str,
     region: str | None = None,
@@ -1502,108 +1130,75 @@ def process_with_runpod(
     upscale: bool = False,
     original_width: int | None = None,
     original_height: int | None = None,
+    cloud: str = "runpod",
 ) -> dict:
-    """
-    Process video using RunPod serverless endpoint.
-
-    Args:
-        upscale: If True and resize_ratio < 1.0, upscale output to original resolution
-        original_width/height: Original video dimensions (for upscaling)
-
-    Returns dict with success/error and metadata.
-    """
-    start_time = time.time()
-    r2_keys_to_cleanup = []  # Track R2 objects for cleanup
-
-    # Get RunPod config
-    config = get_runpod_config()
-    api_key = config.get("api_key")
-    endpoint_id = config.get("endpoint_id")
-
-    if not api_key:
-        return {"error": "RUNPOD_API_KEY not set. Add to .env file."}
-    if not endpoint_id:
-        return {"error": "RUNPOD_ENDPOINT_ID not set. Add to .env file."}
-
-    # Get R2 config (optional, for reliable file transfer)
-    sys.path.insert(0, str(Path(__file__).parent))
-    try:
-        from config import get_r2_config
-        r2_config = get_r2_config()
-    except ImportError:
-        r2_config = None
+    """Process video using cloud GPU endpoint (RunPod or Modal)."""
+    r2_keys_to_cleanup = []
 
     if verbose:
-        print(f"Using RunPod endpoint: {endpoint_id}", file=sys.stderr)
-        if r2_config:
-            print(f"Using Cloudflare R2 for file transfer", file=sys.stderr)
-        else:
-            print(f"R2 not configured, using free file hosting (less reliable)", file=sys.stderr)
+        print(f"Cloud provider: {cloud}", file=sys.stderr)
 
     # Upload video
-    video_url, video_r2_key = upload_to_runpod_storage(input_path, api_key)
+    video_url, video_r2_key = upload_to_storage(input_path, "dewatermark/input")
     if not video_url:
         return {"error": "Failed to upload video"}
     if video_r2_key:
         r2_keys_to_cleanup.append(video_r2_key)
 
-    # Upload mask if provided (instead of region)
+    # Upload mask if provided
     mask_url = None
     if mask_path:
-        mask_url, mask_r2_key = upload_to_runpod_storage(mask_path, api_key)
+        mask_url, mask_r2_key = upload_to_storage(mask_path, "dewatermark/mask")
         if not mask_url:
             return {"error": "Failed to upload mask"}
         if mask_r2_key:
             r2_keys_to_cleanup.append(mask_r2_key)
 
-    # Submit job
-    if verbose:
-        print(f"Submitting job...", file=sys.stderr)
+    # Build payload
+    ratio_value = "auto" if resize_ratio == "auto" else float(resize_ratio)
 
-    job_response = submit_runpod_job(
-        endpoint_id=endpoint_id,
-        api_key=api_key,
-        video_url=video_url,
-        region=region,
-        mask_url=mask_url,
-        r2_config=r2_config,
-        resize_ratio=resize_ratio,
-    )
+    payload = {
+        "input": {
+            "operation": "dewatermark",
+            "video_url": video_url,
+            "resize_ratio": ratio_value,
+        }
+    }
 
-    if not job_response:
-        return {"error": "Failed to submit job"}
+    if region:
+        payload["input"]["region"] = region
+    if mask_url:
+        payload["input"]["mask_url"] = mask_url
 
-    job_id = job_response.get("id")
-    if not job_id:
-        return {"error": f"No job ID in response: {job_response}"}
+    r2_payload = get_r2_payload_config()
+    if r2_payload:
+        payload["input"]["r2"] = r2_payload
 
-    if verbose:
-        print(f"Job submitted: {job_id}", file=sys.stderr)
-        print(f"Waiting for completion (timeout: {timeout}s)...", file=sys.stderr)
+    # For Modal, the endpoint expects the inner payload directly
+    modal_payload = payload["input"] if cloud == "modal" else payload
 
-    # Poll for completion
-    result = poll_runpod_job(
-        endpoint_id=endpoint_id,
-        api_key=api_key,
-        job_id=job_id,
+    # Call cloud GPU endpoint
+    from cloud_gpu import call_cloud_endpoint
+
+    result, elapsed = call_cloud_endpoint(
+        provider=cloud,
+        payload=modal_payload,
+        tool_name="dewatermark",
         timeout=timeout,
+        progress_label="Removing watermark",
         verbose=verbose,
     )
 
-    if not result:
-        return {"error": "Job timed out or failed to get status"}
+    if isinstance(result, dict) and result.get("error"):
+        return {"error": result["error"]}
 
-    status = result.get("status")
-    if status != "COMPLETED":
-        error = result.get("error") or result.get("output", {}).get("error") or "Unknown error"
-        return {"error": f"Job failed: {error}"}
+    # Extract output (RunPod wraps in "output", Modal returns directly)
+    output = result.get("output", result) if cloud == "runpod" else result
 
-    # Get output from result
-    output = result.get("output", {})
     if isinstance(output, dict) and output.get("error"):
         return {"error": output["error"]}
 
-    # Download result - try R2 first if key provided, then URL
+    # Download result
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
     downloaded = False
 
@@ -1613,18 +1208,27 @@ def process_with_runpod(
     if output_r2_key:
         if verbose:
             print(f"Downloading result from R2...", file=sys.stderr)
-        downloaded = _download_from_r2(output_r2_key, output_path)
+        downloaded = download_from_r2(output_r2_key, output_path)
         if downloaded:
             r2_keys_to_cleanup.append(output_r2_key)
-            if verbose:
-                size_mb = Path(output_path).stat().st_size // (1024 * 1024)
-                print(f"  Downloaded: {output_path} ({size_mb}MB)", file=sys.stderr)
 
     if not downloaded and output_url:
         downloaded = download_from_url(output_url, output_path, verbose=verbose)
 
     if not downloaded:
-        return {"error": f"No output_url or r2_key in result: {output}"}
+        # Try base64 fallback (Modal returns base64 when no R2)
+        video_b64 = output.get("video_base64") if isinstance(output, dict) else None
+        if video_b64:
+            import base64
+            with open(output_path, "wb") as f:
+                f.write(base64.b64decode(video_b64))
+            downloaded = True
+            if verbose:
+                size_mb = Path(output_path).stat().st_size // (1024 * 1024)
+                print(f"  Downloaded: {output_path} ({size_mb}MB)", file=sys.stderr)
+
+    if not downloaded:
+        return {"error": f"No output_url, r2_key, or video_base64 in result"}
 
     # Restore audio from original (ProPainter strips audio)
     if preserve_audio:
@@ -1633,7 +1237,6 @@ def process_with_runpod(
         if mux_audio_from_original(temp_video, input_path, output_path, verbose=verbose):
             Path(temp_video).unlink(missing_ok=True)
         else:
-            # Fallback: keep video without audio
             shutil.move(temp_video, output_path)
             if verbose:
                 print(f"  Warning: Could not restore audio, output has no audio", file=sys.stderr)
@@ -1646,7 +1249,6 @@ def process_with_runpod(
         if upscale_video(temp_video, output_path, original_width, original_height, verbose=verbose):
             Path(temp_video).unlink(missing_ok=True)
         else:
-            # Fallback: keep smaller video
             shutil.move(temp_video, output_path)
             if verbose:
                 print(f"  Warning: Upscale failed, output is at reduced resolution", file=sys.stderr)
@@ -1656,16 +1258,15 @@ def process_with_runpod(
         if verbose:
             print(f"Cleaning up {len(r2_keys_to_cleanup)} R2 objects...", file=sys.stderr)
         for key in r2_keys_to_cleanup:
-            _delete_from_r2(key)
-
-    elapsed = time.time() - start_time
+            delete_from_r2(key)
 
     return {
         "success": True,
         "output": output_path,
-        "job_id": job_id,
         "processing_time_seconds": round(elapsed, 2),
-        "runpod_output": output,
+        "cloud_output": output if not output.get("video_base64") else {
+            k: v for k, v in output.items() if k != "video_base64"
+        },
     }
 
 
@@ -1989,7 +1590,7 @@ def setup_runpod(gpu_id: str = "AMPERE_24", verbose: bool = True) -> dict:
             print(f"Endpoint ID:  {result['endpoint_id']}")
             print()
             print("You can now run:")
-            print("  python tools/dewatermark.py --input video.mp4 --region x,y,w,h --output out.mp4 --runpod")
+            print("  python tools/dewatermark.py --input video.mp4 --region x,y,w,h --output out.mp4 --cloud runpod")
             print()
 
     except Exception as e:
@@ -2064,8 +1665,14 @@ def main():
         print(f"Error: Input file not found: {args.input}", file=sys.stderr)
         sys.exit(1)
 
-    # RunPod cloud processing
+    # Handle deprecated --runpod flag
     if args.runpod:
+        print("Note: --runpod is deprecated, use --cloud runpod instead", file=sys.stderr)
+        if not args.cloud:
+            args.cloud = "runpod"
+
+    # Cloud GPU processing
+    if args.cloud:
         # Get video info for smart resize ratio suggestion
         video_info = get_video_info(args.input)
         video_width = video_info.get("width", 1280)
@@ -2096,10 +1703,11 @@ def main():
                 resize_ratio = 0.5  # Safe default
 
         if args.dry_run:
-            config = get_runpod_config()
+            from cloud_gpu import get_provider_config
+            config = get_provider_config(args.cloud, "dewatermark")
             result = {
                 "dry_run": True,
-                "mode": "runpod",
+                "mode": args.cloud,
                 "input": args.input,
                 "output": args.output,
                 "preset": args.preset,
@@ -2109,32 +1717,31 @@ def main():
                 "video_duration": f"{video_duration:.1f}s",
                 "resize_ratio": resize_ratio,
                 "upscale": args.upscale,
-                "endpoint_configured": bool(config.get("endpoint_id")),
-                "api_key_configured": bool(config.get("api_key")),
-                "timeout": args.runpod_timeout,
+                "timeout": args.timeout,
             }
             if args.json:
                 print(json.dumps(result, indent=2))
             else:
-                print("Would process with RunPod:")
+                print(f"Would process with {args.cloud}:")
                 for k, v in result.items():
                     print(f"  {k}: {v}")
             return
 
         if verbose:
-            print("Processing with RunPod cloud GPU...")
+            print(f"Processing with {args.cloud} cloud GPU...")
 
-        result = process_with_runpod(
+        result = process_with_cloud(
             input_path=args.input,
             output_path=args.output,
             region=region,
             mask_path=args.mask,
-            timeout=args.runpod_timeout,
+            timeout=args.timeout,
             verbose=verbose,
             resize_ratio=resize_ratio,
             upscale=args.upscale,
             original_width=video_width,
             original_height=video_height,
+            cloud=args.cloud,
         )
 
         if result.get("error"):

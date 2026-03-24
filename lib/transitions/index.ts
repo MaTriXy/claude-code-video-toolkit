@@ -46,15 +46,17 @@ export type { PixelateProps } from './presentations/pixelate';
 export { checkerboard } from './presentations/checkerboard';
 export type { CheckerboardProps, CheckerboardPattern } from './presentations/checkerboard';
 
-// Re-export official transitions for convenience
-export { slide } from '@remotion/transitions/slide';
-export { fade } from '@remotion/transitions/fade';
-export { wipe } from '@remotion/transitions/wipe';
-export { flip } from '@remotion/transitions/flip';
+// Official transitions (slide, fade, wipe, flip) and timing functions
+// (linearTiming, springTiming, TransitionSeries) should be imported directly
+// from '@remotion/transitions' in your project — not re-exported from here.
+// This avoids module resolution issues when lib/ is outside node_modules scope.
+//
+// Example:
+//   import { TransitionSeries, linearTiming } from '@remotion/transitions';
+//   import { fade } from '@remotion/transitions/fade';
+//   import { glitch, lightLeak } from '../../../lib/transitions';
 
-// Re-export timing functions
-export { linearTiming, springTiming, TransitionSeries } from '@remotion/transitions';
-
-// Gallery/showcase components
-export { TransitionGallery, transitionGalleryConfig, SingleTransitionPreview, transitionMap } from './TransitionGallery';
-export type { TransitionName } from './TransitionGallery';
+// Gallery/showcase components — import directly from './TransitionGallery'
+// in the showcase project. Not re-exported here to avoid pulling in
+// @remotion/transitions at barrel import time.
+// Usage: import { TransitionGallery } from '../../../lib/transitions/TransitionGallery';
