@@ -1,9 +1,8 @@
 {
   "name": "claude-code-video-toolkit",
-  "version": "0.12.0",
+  "version": "0.13.1",
   "description": "AI-native video production workspace for Claude Code",
   "repository": "https://github.com/digitalsamba/claude-code-video-toolkit",
-
   "skills": {
     "remotion-official": {
       "path": ".claude/skills/remotion-official/",
@@ -79,7 +78,6 @@
       "updated": "2026-03-25"
     }
   },
-
   "commands": {
     "video": {
       "path": ".claude/commands/video.md",
@@ -173,7 +171,6 @@
       "updated": "2026-03-23"
     }
   },
-
   "tools": {
     "voiceover": {
       "path": "tools/voiceover.py",
@@ -210,8 +207,20 @@
         "format": "Audio format: mp3, wav, flac",
         "steps": "Inference steps (default: 8 for turbo)"
       },
-      "presets": ["corporate-bg", "upbeat-tech", "ambient", "dramatic", "tension", "hopeful", "cta", "lofi"],
-      "envVars": ["RUNPOD_API_KEY", "RUNPOD_ACESTEP_ENDPOINT_ID"],
+      "presets": [
+        "corporate-bg",
+        "upbeat-tech",
+        "ambient",
+        "dramatic",
+        "tension",
+        "hopeful",
+        "cta",
+        "lofi"
+      ],
+      "envVars": [
+        "RUNPOD_API_KEY",
+        "RUNPOD_ACESTEP_ENDPOINT_ID"
+      ],
       "created": "2026-03-22",
       "updated": "2026-03-22"
     },
@@ -246,7 +255,14 @@
       "status": "beta",
       "optional": true,
       "requires": "RunPod account OR local NVIDIA GPU + ProPainter (~2GB)",
-      "presets": ["notebooklm", "tiktok", "sora", "stock-br", "stock-bl", "stock-center"],
+      "presets": [
+        "notebooklm",
+        "tiktok",
+        "sora",
+        "stock-br",
+        "stock-bl",
+        "stock-center"
+      ],
       "created": "2025-12-29",
       "updated": "2025-12-30"
     },
@@ -256,7 +272,14 @@
       "usage": "python tools/locate_watermark.py --input video.mp4 --grid --output-dir ./review/",
       "status": "beta",
       "requires": "ImageMagick (brew install imagemagick)",
-      "presets": ["notebooklm", "tiktok", "sora", "stock-br", "stock-bl", "stock-center"],
+      "presets": [
+        "notebooklm",
+        "tiktok",
+        "sora",
+        "stock-br",
+        "stock-bl",
+        "stock-center"
+      ],
       "created": "2025-12-29",
       "updated": "2025-12-30"
     },
@@ -285,11 +308,42 @@
       "backend": "qwen-image-edit-2511",
       "requires": "RunPod account",
       "presets": {
-        "background": ["office", "studio", "outdoors", "pyramids", "beach", "city", "mountains", "space", "forest", "cafe"],
-        "style": ["cyberpunk", "anime", "oil-painting", "watercolor", "pixel-art", "noir", "pop-art", "sketch", "vintage", "cinematic"],
-        "viewpoint": ["front", "profile", "three-quarter", "looking-up", "looking-down"]
+        "background": [
+          "office",
+          "studio",
+          "outdoors",
+          "pyramids",
+          "beach",
+          "city",
+          "mountains",
+          "space",
+          "forest",
+          "cafe"
+        ],
+        "style": [
+          "cyberpunk",
+          "anime",
+          "oil-painting",
+          "watercolor",
+          "pixel-art",
+          "noir",
+          "pop-art",
+          "sketch",
+          "vintage",
+          "cinematic"
+        ],
+        "viewpoint": [
+          "front",
+          "profile",
+          "three-quarter",
+          "looking-up",
+          "looking-down"
+        ]
       },
-      "envVars": ["RUNPOD_API_KEY", "RUNPOD_QWEN_EDIT_ENDPOINT_ID"],
+      "envVars": [
+        "RUNPOD_API_KEY",
+        "RUNPOD_QWEN_EDIT_ENDPOINT_ID"
+      ],
       "estimatedCost": "$0.01-0.02 per image",
       "created": "2026-01-01",
       "updated": "2026-01-05"
@@ -303,12 +357,26 @@
       "backend": "realesrgan",
       "requires": "RunPod account",
       "options": {
-        "scale": [2, 4],
-        "model": ["general", "anime", "photo"],
+        "scale": [
+          2,
+          4
+        ],
+        "model": [
+          "general",
+          "anime",
+          "photo"
+        ],
         "faceEnhance": true,
-        "format": ["png", "jpg", "webp"]
+        "format": [
+          "png",
+          "jpg",
+          "webp"
+        ]
       },
-      "envVars": ["RUNPOD_API_KEY", "RUNPOD_UPSCALE_ENDPOINT_ID"],
+      "envVars": [
+        "RUNPOD_API_KEY",
+        "RUNPOD_UPSCALE_ENDPOINT_ID"
+      ],
       "estimatedCost": "$0.01-0.05 per image",
       "created": "2026-01-04",
       "updated": "2026-01-05"
@@ -322,13 +390,29 @@
       "backend": "sadtalker",
       "requires": "RunPod account",
       "options": {
-        "presets": ["default", "natural", "expressive", "professional", "fullbody"],
-        "preprocess": ["crop", "resize", "full"],
-        "size": [256, 512],
+        "presets": [
+          "default",
+          "natural",
+          "expressive",
+          "professional",
+          "fullbody"
+        ],
+        "preprocess": [
+          "crop",
+          "resize",
+          "full"
+        ],
+        "size": [
+          256,
+          512
+        ],
         "still": true,
         "expressionScale": "0.5-2.0"
       },
-      "envVars": ["RUNPOD_API_KEY", "RUNPOD_SADTALKER_ENDPOINT_ID"],
+      "envVars": [
+        "RUNPOD_API_KEY",
+        "RUNPOD_SADTALKER_ENDPOINT_ID"
+      ],
       "estimatedCost": "$0.02-0.15 per video (depends on audio length)",
       "documentation": "docs/sadtalker.md",
       "created": "2026-01-11",
@@ -343,12 +427,43 @@
       "backend": "qwen3-tts",
       "requires": "RunPod account",
       "options": {
-        "speakers": ["Ryan", "Aiden", "Vivian", "Serena", "Uncle_Fu", "Dylan", "Eric", "Ono_Anna", "Sohee"],
-        "languages": ["Auto", "English", "Chinese", "French", "German", "Italian", "Japanese", "Korean", "Portuguese", "Russian", "Spanish"],
-        "modes": ["custom_voice", "clone"],
-        "formats": ["mp3", "wav"]
+        "speakers": [
+          "Ryan",
+          "Aiden",
+          "Vivian",
+          "Serena",
+          "Uncle_Fu",
+          "Dylan",
+          "Eric",
+          "Ono_Anna",
+          "Sohee"
+        ],
+        "languages": [
+          "Auto",
+          "English",
+          "Chinese",
+          "French",
+          "German",
+          "Italian",
+          "Japanese",
+          "Korean",
+          "Portuguese",
+          "Russian",
+          "Spanish"
+        ],
+        "modes": [
+          "custom_voice",
+          "clone"
+        ],
+        "formats": [
+          "mp3",
+          "wav"
+        ]
       },
-      "envVars": ["RUNPOD_API_KEY", "RUNPOD_QWEN3_TTS_ENDPOINT_ID"],
+      "envVars": [
+        "RUNPOD_API_KEY",
+        "RUNPOD_QWEN3_TTS_ENDPOINT_ID"
+      ],
       "estimatedCost": "$0.005-0.10 per generation",
       "created": "2026-02-19",
       "updated": "2026-02-19"
@@ -372,17 +487,44 @@
       "backend": "flux2-klein-4b",
       "requires": "RunPod account",
       "options": {
-        "modes": ["generate", "edit"],
-        "presets": ["title-bg", "problem", "solution", "demo-bg", "stats-bg", "cta", "thumbnail", "portrait-bg"],
+        "modes": [
+          "generate",
+          "edit"
+        ],
+        "presets": [
+          "title-bg",
+          "problem",
+          "solution",
+          "demo-bg",
+          "stats-bg",
+          "cta",
+          "thumbnail",
+          "portrait-bg"
+        ],
         "brand": true,
-        "width": [512, 768, 1024, 1280, 1920],
-        "height": [512, 768, 1024, 1080, 1280],
+        "width": [
+          512,
+          768,
+          1024,
+          1280,
+          1920
+        ],
+        "height": [
+          512,
+          768,
+          1024,
+          1080,
+          1280
+        ],
         "steps": "4 (fast) to 50 (quality)",
         "guidance": "1.0 (fast) to 4.0 (quality)",
         "seed": true,
         "multiImage": true
       },
-      "envVars": ["RUNPOD_API_KEY", "RUNPOD_FLUX2_ENDPOINT_ID"],
+      "envVars": [
+        "RUNPOD_API_KEY",
+        "RUNPOD_FLUX2_ENDPOINT_ID"
+      ],
       "estimatedCost": "$0.01-0.03 per image",
       "created": "2026-03-14",
       "updated": "2026-03-15"
@@ -396,22 +538,37 @@
       "backend": "ltx-2.3-22b",
       "requires": "Modal account, HuggingFace token",
       "options": {
-        "modes": ["text-to-video", "image-to-video"],
-        "width": [512, 768, 1024],
-        "height": [512, 576, 1024],
+        "modes": [
+          "text-to-video",
+          "image-to-video"
+        ],
+        "width": [
+          512,
+          768,
+          1024
+        ],
+        "height": [
+          512,
+          576,
+          1024
+        ],
         "numFrames": "25-193 ((n-1)%8==0)",
         "fps": 24,
-        "quality": ["standard", "fast"],
+        "quality": [
+          "standard",
+          "fast"
+        ],
         "steps": "15 (fast) to 30+ (standard)",
         "seed": true
       },
-      "envVars": ["MODAL_LTX2_ENDPOINT_URL"],
+      "envVars": [
+        "MODAL_LTX2_ENDPOINT_URL"
+      ],
       "estimatedCost": "$0.20-0.25 per 5s clip",
       "created": "2026-03-25",
       "updated": "2026-03-25"
     }
   },
-
   "optionalComponents": {
     "propainter": {
       "name": "ProPainter",
@@ -429,61 +586,76 @@
       "documentation": "docs/optional-components.md"
     }
   },
-
   "cloudProviders": {
     "runpod": {
       "name": "RunPod",
       "description": "Serverless GPU cloud for video and image processing",
       "documentation": "docs/runpod-setup.md",
-      "envVars": ["RUNPOD_API_KEY"],
+      "envVars": [
+        "RUNPOD_API_KEY"
+      ],
       "endpoints": {
         "propainter": {
           "image": "ghcr.io/conalmullan/video-toolkit-propainter:latest",
           "dockerfile": "docker/runpod-propainter/",
           "envVar": "RUNPOD_ENDPOINT_ID",
-          "operations": ["dewatermark"],
+          "operations": [
+            "dewatermark"
+          ],
           "estimatedCost": "$0.05-0.30 per video"
         },
         "qwen-edit": {
           "image": "ghcr.io/conalmullan/video-toolkit-qwen-edit:latest",
           "dockerfile": "docker/runpod-qwen-edit/",
           "envVar": "RUNPOD_QWEN_EDIT_ENDPOINT_ID",
-          "operations": ["image_edit"],
+          "operations": [
+            "image_edit"
+          ],
           "estimatedCost": "$0.01-0.02 per image"
         },
         "realesrgan": {
           "image": "ghcr.io/conalmullan/video-toolkit-realesrgan:latest",
           "dockerfile": "docker/runpod-realesrgan/",
           "envVar": "RUNPOD_UPSCALE_ENDPOINT_ID",
-          "operations": ["upscale"],
+          "operations": [
+            "upscale"
+          ],
           "estimatedCost": "$0.01-0.05 per image"
         },
         "sadtalker": {
           "image": "ghcr.io/conalmullan/video-toolkit-sadtalker:latest",
           "dockerfile": "docker/runpod-sadtalker/",
           "envVar": "RUNPOD_SADTALKER_ENDPOINT_ID",
-          "operations": ["sadtalker"],
+          "operations": [
+            "sadtalker"
+          ],
           "estimatedCost": "$0.02-0.15 per video"
         },
         "qwen3-tts": {
           "image": "ghcr.io/conalmullan/video-toolkit-qwen3-tts:latest",
           "dockerfile": "docker/runpod-qwen3-tts/",
           "envVar": "RUNPOD_QWEN3_TTS_ENDPOINT_ID",
-          "operations": ["qwen3_tts"],
+          "operations": [
+            "qwen3_tts"
+          ],
           "estimatedCost": "$0.005-0.10 per generation"
         },
         "flux2": {
           "image": "ghcr.io/conalmullan/video-toolkit-flux2:latest",
           "dockerfile": "docker/runpod-flux2/",
           "envVar": "RUNPOD_FLUX2_ENDPOINT_ID",
-          "operations": ["flux2"],
+          "operations": [
+            "flux2"
+          ],
           "estimatedCost": "$0.01-0.03 per image"
         },
         "acestep": {
           "image": "ghcr.io/conalmullan/video-toolkit-acestep:latest",
           "dockerfile": "docker/runpod-acestep/",
           "envVar": "RUNPOD_ACESTEP_ENDPOINT_ID",
-          "operations": ["music_gen"],
+          "operations": [
+            "music_gen"
+          ],
           "estimatedCost": "$0.01-0.05 per track"
         }
       },
@@ -494,61 +666,81 @@
       "name": "Modal",
       "description": "Serverless GPU cloud with Python-native deployment and fast cold starts",
       "documentation": "docs/modal-setup.md",
-      "envVars": ["MODAL_TOKEN_ID", "MODAL_TOKEN_SECRET"],
+      "envVars": [
+        "MODAL_TOKEN_ID",
+        "MODAL_TOKEN_SECRET"
+      ],
       "endpoints": {
         "qwen3-tts": {
           "appFile": "docker/modal-qwen3-tts/app.py",
           "envVar": "MODAL_QWEN3_TTS_ENDPOINT_URL",
-          "operations": ["qwen3_tts"],
+          "operations": [
+            "qwen3_tts"
+          ],
           "gpu": "A10G",
           "estimatedCost": "$0.005-0.10 per generation"
         },
         "flux2": {
           "appFile": "docker/modal-flux2/app.py",
           "envVar": "MODAL_FLUX2_ENDPOINT_URL",
-          "operations": ["flux2"],
+          "operations": [
+            "flux2"
+          ],
           "gpu": "A10G",
           "estimatedCost": "$0.01-0.03 per image"
         },
         "upscale": {
           "appFile": "docker/modal-upscale/app.py",
           "envVar": "MODAL_UPSCALE_ENDPOINT_URL",
-          "operations": ["upscale"],
+          "operations": [
+            "upscale"
+          ],
           "gpu": "A10G",
           "estimatedCost": "$0.005-0.02 per image"
         },
         "image-edit": {
           "appFile": "docker/modal-image-edit/app.py",
           "envVar": "MODAL_IMAGE_EDIT_ENDPOINT_URL",
-          "operations": ["image_edit"],
+          "operations": [
+            "image_edit"
+          ],
           "gpu": "A100",
           "estimatedCost": "$0.02-0.05 per image"
         },
         "music-gen": {
           "appFile": "docker/modal-music-gen/app.py",
           "envVar": "MODAL_MUSIC_GEN_ENDPOINT_URL",
-          "operations": ["music_gen"],
+          "operations": [
+            "music_gen"
+          ],
           "gpu": "A10G",
           "estimatedCost": "$0.02-0.10 per generation"
         },
         "sadtalker": {
           "appFile": "docker/modal-sadtalker/app.py",
           "envVar": "MODAL_SADTALKER_ENDPOINT_URL",
-          "operations": ["sadtalker"],
+          "operations": [
+            "sadtalker"
+          ],
           "gpu": "A10G",
           "estimatedCost": "$0.05-0.30 per video"
         },
         "dewatermark": {
           "appFile": "docker/modal-propainter/app.py",
           "envVar": "MODAL_DEWATERMARK_ENDPOINT_URL",
-          "operations": ["dewatermark"],
+          "operations": [
+            "dewatermark"
+          ],
           "gpu": "A10G",
           "estimatedCost": "$0.05-0.50 per video"
         },
         "ltx2": {
           "appFile": "docker/modal-ltx2/app.py",
           "envVar": "MODAL_LTX2_ENDPOINT_URL",
-          "operations": ["text-to-video", "image-to-video"],
+          "operations": [
+            "text-to-video",
+            "image-to-video"
+          ],
           "gpu": "A100-80GB",
           "estimatedCost": "$0.20-0.25 per 5s clip"
         }
@@ -557,7 +749,6 @@
       "updated": "2026-03-25"
     }
   },
-
   "templates": {
     "sprint-review": {
       "path": "templates/sprint-review/",
@@ -581,60 +772,96 @@
       "updated": "2025-12-10"
     }
   },
-
   "transitions": {
     "glitch": {
       "path": "lib/transitions/presentations/glitch.tsx",
       "description": "Digital distortion with RGB shift and scan lines",
-      "options": ["intensity", "slices", "rgbShift"],
+      "options": [
+        "intensity",
+        "slices",
+        "rgbShift"
+      ],
       "bestFor": "Tech demos, edgy reveals, cyberpunk aesthetic",
       "status": "stable"
     },
     "rgbSplit": {
       "path": "lib/transitions/presentations/rgb-split.tsx",
       "description": "Chromatic aberration / color separation effect",
-      "options": ["direction", "displacement"],
+      "options": [
+        "direction",
+        "displacement"
+      ],
       "bestFor": "Modern tech, energetic transitions",
       "status": "stable"
     },
     "zoomBlur": {
       "path": "lib/transitions/presentations/zoom-blur.tsx",
       "description": "Radial motion blur with scale",
-      "options": ["direction", "blurAmount"],
+      "options": [
+        "direction",
+        "blurAmount"
+      ],
       "bestFor": "CTAs, high-energy moments, impact",
       "status": "stable"
     },
     "lightLeak": {
       "path": "lib/transitions/presentations/light-leak.tsx",
       "description": "Cinematic lens flare and overexposure",
-      "options": ["temperature", "direction"],
+      "options": [
+        "temperature",
+        "direction"
+      ],
       "bestFor": "Celebrations, film aesthetic, warm moments",
       "status": "stable"
     },
     "clockWipe": {
       "path": "lib/transitions/presentations/clock-wipe.tsx",
       "description": "Radial sweep reveal like clock hands",
-      "options": ["startAngle", "direction", "segments"],
+      "options": [
+        "startAngle",
+        "direction",
+        "segments"
+      ],
       "bestFor": "Time-related content, playful reveals",
       "status": "stable"
     },
     "pixelate": {
       "path": "lib/transitions/presentations/pixelate.tsx",
       "description": "Digital mosaic dissolution with glitch artifacts",
-      "options": ["maxBlockSize", "gridSize", "scanlines", "glitchArtifacts", "randomness"],
+      "options": [
+        "maxBlockSize",
+        "gridSize",
+        "scanlines",
+        "glitchArtifacts",
+        "randomness"
+      ],
       "bestFor": "Retro/gaming themes, digital transformations",
       "status": "stable"
     },
     "checkerboard": {
       "path": "lib/transitions/presentations/checkerboard.tsx",
       "description": "Grid-based reveal with multiple patterns",
-      "options": ["gridSize", "pattern", "stagger", "squareAnimation"],
-      "patterns": ["sequential", "random", "diagonal", "alternating", "spiral", "rows", "columns", "center-out", "corners-in"],
+      "options": [
+        "gridSize",
+        "pattern",
+        "stagger",
+        "squareAnimation"
+      ],
+      "patterns": [
+        "sequential",
+        "random",
+        "diagonal",
+        "alternating",
+        "spiral",
+        "rows",
+        "columns",
+        "center-out",
+        "corners-in"
+      ],
       "bestFor": "Playful reveals, structured transitions",
       "status": "stable"
     }
   },
-
   "components": {
     "AnimatedBackground": {
       "path": "lib/components/AnimatedBackground.tsx",
@@ -704,7 +931,6 @@
       "updated": "2026-02-19"
     }
   },
-
   "brands": {
     "default": {
       "path": "brands/default/",
@@ -719,7 +945,6 @@
       "updated": "2025-12-09"
     }
   },
-
   "examples": {
     "hello-world": {
       "path": "examples/hello-world/",
@@ -751,7 +976,6 @@
       "created": "2026-03-15"
     }
   },
-
   "config": {
     "voiceId": "YOUR_VOICE_ID_HERE",
     "defaultFps": 30,
