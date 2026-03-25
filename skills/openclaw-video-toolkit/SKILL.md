@@ -68,6 +68,12 @@ modal deploy docker/modal-sadtalker/app.py
 modal deploy docker/modal-image-edit/app.py
 modal deploy docker/modal-upscale/app.py
 modal deploy docker/modal-propainter/app.py
+modal deploy docker/modal-ltx2/app.py      # Requires: modal secret create huggingface-token HF_TOKEN=hf_...
+```
+
+**LTX-2 prerequisite:** Before deploying LTX-2, create a HuggingFace secret and accept the [Gemma 3 license](https://huggingface.co/google/gemma-3-12b-it-qat-q4_0-unquantized):
+```bash
+modal secret create huggingface-token HF_TOKEN=hf_your_read_access_token
 ```
 
 Add each URL to `.env`:
@@ -79,6 +85,7 @@ MODAL_SADTALKER_ENDPOINT_URL=https://...modal.run
 MODAL_IMAGE_EDIT_ENDPOINT_URL=https://...modal.run
 MODAL_UPSCALE_ENDPOINT_URL=https://...modal.run
 MODAL_DEWATERMARK_ENDPOINT_URL=https://...modal.run
+MODAL_LTX2_ENDPOINT_URL=https://...modal.run
 ```
 
 Optional but recommended — Cloudflare R2 for reliable file transfer:
@@ -248,7 +255,47 @@ python3 tools/flux2.py \
   --cloud modal
 ```
 
-#### 4d. Talking Head Narrator (optional)
+#### 4d. Video Clips — B-Roll & Animated Backgrounds (optional)
+
+Generate AI video clips for b-roll cutaways, animated slide backgrounds, or intro/outro sequences:
+
+```bash
+cd ~/.openclaw/workspace/claude-code-video-toolkit
+
+# B-roll clip from text
+python3 tools/ltx2.py \
+  --prompt "Aerial drone shot over a European city at golden hour, cinematic wide angle" \
+  --output projects/PROJECT_NAME/public/videos/broll-europe.mp4 \
+  --cloud modal
+
+# Animate a slide/screenshot (image-to-video)
+python3 tools/ltx2.py \
+  --prompt "Gentle particle effects, soft ambient light shifts, very slight camera drift" \
+  --input projects/PROJECT_NAME/public/images/title-bg.png \
+  --output projects/PROJECT_NAME/public/videos/animated-title.mp4 \
+  --cloud modal
+
+# Abstract intro/outro background
+python3 tools/ltx2.py \
+  --prompt "Dark moody abstract background with flowing blue light streaks, bokeh particles, cinematic" \
+  --output projects/PROJECT_NAME/public/videos/intro-bg.mp4 \
+  --cloud modal
+```
+
+Use in Remotion compositions with `<OffthreadVideo>`:
+```tsx
+<OffthreadVideo src={staticFile('videos/broll-europe.mp4')} />
+```
+
+**LTX-2 rules:**
+- Max ~8 seconds per clip (193 frames at 24fps). Default is ~5s (121 frames).
+- Width/height must be divisible by 64. Default: 768x512.
+- ~$0.20-0.25 per clip, ~2.5 min generation time.
+- Cold start ~60-90s. Subsequent clips on warm GPU are faster.
+- Generated audio is ambient only — use voiceover/music tools for speech and music.
+- ~30% of generations may have training data artifacts (logos/text). Re-run with `--seed` to vary.
+
+#### 4e. Talking Head Narrator (optional)
 
 Generate a presenter portrait, then animate per-scene clips:
 
@@ -402,6 +449,7 @@ import { lightLeak } from '../../../lib/transitions/presentations/light-leak';
 | SadTalker | ~$0.05-0.20/scene | ~3-4 min per 10s audio |
 | Qwen-Edit | ~$0.03-0.15 | ~8 min cold start (25GB model) |
 | RealESRGAN | ~$0.005/image | Very fast |
+| LTX-2.3 | ~$0.20-0.25/clip | ~2.5 min per 5s clip, A100-80GB |
 
 **Total for a 60s video:** ~$1-3 depending on scenes and narrator clips.
 
