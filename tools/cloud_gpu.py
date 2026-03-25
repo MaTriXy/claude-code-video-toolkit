@@ -40,6 +40,7 @@ _MODAL_ENV_VARS = {
     "image_edit": "MODAL_IMAGE_EDIT_ENDPOINT_URL",
     "music_gen": "MODAL_MUSIC_GEN_ENDPOINT_URL",
     "dewatermark": "MODAL_DEWATERMARK_ENDPOINT_URL",
+    "ltx2": "MODAL_LTX2_ENDPOINT_URL",
 }
 
 
@@ -98,6 +99,7 @@ _TOOL_GPU = {
         "image_edit": "A10G",
         "music_gen": "A10G",
         "dewatermark": "A10G",
+        "ltx2": "A100-80GB",
     },
     "runpod": {
         "qwen3_tts": "ADA_24",
