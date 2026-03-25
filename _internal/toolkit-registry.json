@@ -70,6 +70,13 @@
       "status": "beta",
       "created": "2026-03-22",
       "updated": "2026-03-22"
+    },
+    "ltx2": {
+      "path": ".claude/skills/ltx2/",
+      "description": "AI video generation — prompting guide, parameters, video production use cases (b-roll, animated slides, portraits)",
+      "status": "beta",
+      "created": "2026-03-25",
+      "updated": "2026-03-25"
     }
   },
 
@@ -379,6 +386,29 @@
       "estimatedCost": "$0.01-0.03 per image",
       "created": "2026-03-14",
       "updated": "2026-03-15"
+    },
+    "ltx2": {
+      "path": "tools/ltx2.py",
+      "description": "AI video generation using LTX-2.3 22B - text-to-video, image-to-video clips with synchronized audio",
+      "usage": "python tools/ltx2.py --prompt \"A sunset over the ocean\" --output sunset.mp4",
+      "status": "beta",
+      "category": "video-generation",
+      "backend": "ltx-2.3-22b",
+      "requires": "Modal account, HuggingFace token",
+      "options": {
+        "modes": ["text-to-video", "image-to-video"],
+        "width": [512, 768, 1024],
+        "height": [512, 576, 1024],
+        "numFrames": "25-193 ((n-1)%8==0)",
+        "fps": 24,
+        "quality": ["standard", "fast"],
+        "steps": "15 (fast) to 30+ (standard)",
+        "seed": true
+      },
+      "envVars": ["MODAL_LTX2_ENDPOINT_URL"],
+      "estimatedCost": "$0.20-0.25 per 5s clip",
+      "created": "2026-03-25",
+      "updated": "2026-03-25"
     }
   },
 
@@ -514,10 +544,17 @@
           "operations": ["dewatermark"],
           "gpu": "A10G",
           "estimatedCost": "$0.05-0.50 per video"
+        },
+        "ltx2": {
+          "appFile": "docker/modal-ltx2/app.py",
+          "envVar": "MODAL_LTX2_ENDPOINT_URL",
+          "operations": ["text-to-video", "image-to-video"],
+          "gpu": "A100-80GB",
+          "estimatedCost": "$0.20-0.25 per 5s clip"
         }
       },
       "created": "2026-03-23",
-      "updated": "2026-03-23"
+      "updated": "2026-03-25"
     }
   },
 

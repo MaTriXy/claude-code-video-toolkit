@@ -6,6 +6,28 @@ All notable changes to claude-code-video-toolkit.
 
 ---
 
+## 2026-03-25 (v0.13.1)
+
+### Added
+- **`tools/ltx2.py`** — AI video generation using LTX-2.3 22B DiT model
+  - Text-to-video generation from prompts (~5s clips at up to 1024x1536)
+  - Image-to-video — animate still images with motion prompts
+  - Joint audio+video generation (synchronized ambient audio)
+  - Quality presets: `standard` (30 steps) and `fast` (15 steps)
+  - Valid frame counts: 25-193 frames ((n-1)%8==0), 24fps default
+  - Modal deployment on A100-80GB with baked weights (~55GB)
+  - Estimated cost: ~$0.23 per 5-second clip
+- **LTX-2 skill** (`.claude/skills/ltx2/`) — prompting guide, parameters, video production use cases
+- **Openclaw skill updated** — LTX-2 added as section 4d (video clips), setup instructions, cost table
+
+### Technical Notes
+- `torch.inference_mode()` required around pipeline call — without it, Gemma text encoder retains ~37GB of autograd activations causing OOM (upstream bug: Lightricks/LTX-2#152)
+- Weights hosted on `Lightricks/LTX-2.3` HuggingFace repo (separate from the code repo `Lightricks/LTX-2`)
+- `transformers` pinned to 4.57.6 (5.x breaks `Gemma3TextConfig.rope_local_base_freq`)
+- HuggingFace token required for both LTX-2 (rate limiting) and Gemma 3 (gated model)
+
+---
+
 ## 2026-03-22 (v0.12.0)
 
 ### Added

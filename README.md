@@ -63,6 +63,7 @@ Claude Code has deep knowledge in:
 | **frontend-design** | Visual design refinement for distinctive, production-grade aesthetics |
 | **qwen-edit** | AI image editing — prompting patterns and best practices |
 | **acestep** | AI music generation — prompts, lyrics, scene presets, video integration |
+| **ltx2** | AI video generation — text-to-video, image-to-video clips, prompting guide |
 | **runpod** | Cloud GPU — setup, Docker images, endpoint management, costs |
 
 ### Commands
@@ -211,6 +212,10 @@ python tools/sadtalker.py --image portrait.png --audio voiceover.mp3 --output ta
 python tools/flux2.py --prompt "A sunset over mountains" --cloud modal
 python tools/flux2.py --preset title-bg --brand digital-samba --cloud modal
 python tools/flux2.py --list-presets
+
+# AI video generation (LTX-2.3 22B — text-to-video + image-to-video)
+python tools/ltx2.py --prompt "A sunset over the ocean, cinematic" --cloud modal
+python tools/ltx2.py --prompt "Gentle camera drift" --input photo.jpg --cloud modal
 ```
 
 **Tool Categories:**
@@ -219,11 +224,11 @@ python tools/flux2.py --list-presets
 |------|-------|---------|
 | **Project** | voiceover, music, music_gen, sfx | Used during video creation workflow |
 | **Utility** | redub, addmusic, notebooklm_brand, locate_watermark | Quick transformations, no project needed |
-| **Cloud GPU** | image_edit, upscale, dewatermark, sadtalker, qwen3_tts, flux2, music_gen | AI processing via Modal or RunPod |
+| **Cloud GPU** | image_edit, upscale, dewatermark, sadtalker, qwen3_tts, flux2, music_gen, ltx2 | AI processing via Modal or RunPod |
 
 ### Cloud GPU (Modal + RunPod)
 
-7 AI tools run on cloud GPUs. Use `--cloud modal` (recommended) or `--cloud runpod` on any tool.
+8 AI tools run on cloud GPUs. Use `--cloud modal` (recommended) or `--cloud runpod` on any tool.
 
 | Tool | What It Does | Est. Cost |
 |------|--------------|-----------|
@@ -233,6 +238,7 @@ python tools/flux2.py --list-presets
 | `upscale` | AI image upscaling (2x/4x) | ~$0.01 |
 | `music_gen` | AI music generation (8 scene presets) | ~$0.05 |
 | `sadtalker` | Talking head video from portrait + audio | ~$0.10 |
+| `ltx2` | AI video generation (text-to-video, image-to-video) | ~$0.23 |
 | `dewatermark` | Video watermark removal | ~$0.10 |
 
 **Modal (recommended):** Each tool deploys from `docker/modal-*/app.py` — Modal builds and hosts the containers. $30/month free compute on the Starter plan, typical usage is $1-2/month. Run `/setup` to deploy all tools automatically.
