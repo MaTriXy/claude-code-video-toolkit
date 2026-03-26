@@ -149,7 +149,7 @@ def generate_audio(
     verbose: bool = True,
     temperature: float | None = None,
     top_p: float | None = None,
-    cloud: str = "runpod",
+    cloud: str = "modal",
 ) -> dict:
     """Generate audio using Qwen3-TTS via cloud GPU.
 
@@ -157,7 +157,7 @@ def generate_audio(
     Returns dict with: success, output, duration_seconds, duration_frames_30fps
 
     Args:
-        cloud: Cloud provider — "runpod" (default) or "modal".
+        cloud: Cloud provider — "modal" (default) or "runpod".
     """
     start_time = time.time()
     r2_keys_to_cleanup = []
@@ -852,9 +852,9 @@ Examples:
     parser.add_argument(
         "--cloud",
         type=str,
-        default="runpod",
+        default="modal",
         choices=["runpod", "modal"],
-        help="Cloud GPU provider (default: runpod)",
+        help="Cloud GPU provider (default: modal)",
     )
     parser.add_argument(
         "--timeout",

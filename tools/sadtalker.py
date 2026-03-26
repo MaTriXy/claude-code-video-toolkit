@@ -680,9 +680,9 @@ Examples:
     parser.add_argument(
         "--cloud",
         type=str,
-        default="runpod",
+        default="modal",
         choices=["runpod", "modal"],
-        help="Cloud GPU provider (default: runpod)",
+        help="Cloud GPU provider (default: modal)",
     )
     parser.add_argument(
         "--timeout",

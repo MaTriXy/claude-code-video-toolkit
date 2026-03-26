@@ -887,8 +887,8 @@ Examples:
 
     # Cloud provider
     cloud_group = parser.add_argument_group("Cloud")
-    cloud_group.add_argument("--cloud", type=str, default="runpod", choices=["runpod", "modal"],
-                             help="Cloud GPU provider (default: runpod)")
+    cloud_group.add_argument("--cloud", type=str, default="modal", choices=["runpod", "modal"],
+                             help="Cloud GPU provider (default: modal)")
 
     # Setup
     setup_group = parser.add_argument_group("Setup")

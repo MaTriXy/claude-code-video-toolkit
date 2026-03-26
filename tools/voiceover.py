@@ -203,9 +203,9 @@ Examples:
     parser.add_argument(
         "--cloud",
         type=str,
-        default="runpod",
+        default="modal",
         choices=["runpod", "modal"],
-        help="Cloud GPU provider for Qwen3-TTS (default: runpod)",
+        help="Cloud GPU provider for Qwen3-TTS (default: modal)",
     )
 
     # Brand integration

@@ -378,8 +378,8 @@ Examples:
     adv_group.add_argument("--guidance", "-g", type=float, default=1.0, help="Guidance scale - higher = follows prompt more strictly (default: 1.0)")
     adv_group.add_argument("--negative", "-n", help="Negative prompt - things to avoid")
     adv_group.add_argument("--verbose", action="store_true", help="Show detailed output")
-    adv_group.add_argument("--cloud", type=str, default="runpod", choices=["runpod", "modal"],
-                           help="Cloud GPU provider (default: runpod)")
+    adv_group.add_argument("--cloud", type=str, default="modal", choices=["runpod", "modal"],
+                           help="Cloud GPU provider (default: modal)")
 
     # Utility
     parser.add_argument("--list-presets", action="store_true", help="List available presets")
