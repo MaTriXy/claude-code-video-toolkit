@@ -96,8 +96,9 @@ python3 tools/image_edit.py --input photo.jpg --style cyberpunk --cloud modal
 # AI upscaling
 python3 tools/upscale.py --input photo.jpg --output photo_4x.png --cloud modal
 
-# AI music generation
-python3 tools/music_gen.py --preset corporate-bg --duration 60 --output bg.mp3 --cloud modal
+# AI music generation (acemusic cloud API is now default — no Modal needed)
+python3 tools/music_gen.py --preset corporate-bg --duration 60 --output bg.mp3
+# Or use Modal: python3 tools/music_gen.py --preset corporate-bg --duration 60 --output bg.mp3 --cloud modal
 
 # Talking head from portrait + audio
 python3 tools/sadtalker.py --image portrait.png --audio voiceover.mp3 --output talking.mp4 --cloud modal
@@ -114,7 +115,7 @@ python3 tools/dewatermark.py --input video.mp4 --region 1080,660,195,40 --output
 | `flux2` | FLUX.2 Klein | AI image generation | ~$0.01-0.03 |
 | `image_edit` | Qwen-Image-Edit | AI image editing, style transfer | ~$0.02-0.05 |
 | `upscale` | RealESRGAN | AI image upscaling (2x/4x) | ~$0.005-0.02 |
-| `music_gen` | ACE-Step 1.5 | AI music generation | ~$0.02-0.10 |
+| `music_gen` | ACE-Step 1.5 | AI music generation | Free (acemusic) / ~$0.02-0.10 (Modal) |
 | `sadtalker` | SadTalker | Talking head video | ~$0.05-0.30 |
 | `dewatermark` | ProPainter | AI video inpainting | ~$0.05-0.50 |
 

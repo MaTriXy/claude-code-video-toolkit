@@ -78,6 +78,7 @@ modal secret create huggingface-token HF_TOKEN=hf_your_read_access_token
 
 Add each URL to `.env`:
 ```
+ACEMUSIC_API_KEY=...                          # Free key from acemusic.ai/api-key (best music quality)
 MODAL_QWEN3_TTS_ENDPOINT_URL=https://...modal.run
 MODAL_FLUX2_ENDPOINT_URL=https://...modal.run
 MODAL_MUSIC_GEN_ENDPOINT_URL=https://...modal.run
@@ -184,8 +185,24 @@ cd ~/.openclaw/workspace/claude-code-video-toolkit
 
 #### 4a. Background Music
 
+Default provider is **acemusic** (official cloud API, free key). No GPU required. Falls back to Modal/RunPod for self-hosted.
+
 ```bash
 cd ~/.openclaw/workspace/claude-code-video-toolkit
+
+# Using acemusic cloud API (default — best quality, XL Turbo 4B model)
+python3 tools/music_gen.py \
+  --preset corporate-bg \
+  --duration 90 \
+  --output projects/PROJECT_NAME/public/audio/bg-music.mp3
+
+# Or with custom prompt and thinking mode
+python3 tools/music_gen.py \
+  --prompt "Subtle ambient tech, soft synth pads" \
+  --duration 90 \
+  --output projects/PROJECT_NAME/public/audio/bg-music.mp3
+
+# Fall back to self-hosted Modal if no acemusic key
 python3 tools/music_gen.py \
   --preset corporate-bg \
   --duration 90 \
@@ -194,6 +211,8 @@ python3 tools/music_gen.py \
 ```
 
 Presets: `corporate-bg`, `upbeat-tech`, `ambient`, `dramatic`, `tension`, `hopeful`, `cta`, `lofi`.
+
+Setup: `echo "ACEMUSIC_API_KEY=your_key" >> .env` (get free key at acemusic.ai/api-key).
 
 #### 4b. Voiceover (per-scene)
 

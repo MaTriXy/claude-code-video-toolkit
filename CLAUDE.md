@@ -202,9 +202,17 @@ See `docs/qwen-edit-patterns.md` and `.claude/skills/qwen-edit/` for prompting g
 
 ### AI Music Generation (ACE-Step 1.5)
 
+Default provider is **acemusic** (official cloud API, free key from [acemusic.ai/api-key](https://acemusic.ai/api-key)). Uses XL Turbo 4B model with 5Hz LM thinking mode. Falls back to Modal/RunPod for self-hosted 2B model.
+
 ```bash
-# Background music with precise control
+# Background music (acemusic cloud API by default)
 python tools/music_gen.py --prompt "Upbeat tech corporate" --duration 60 --bpm 128 --key "G Major" --output music.mp3
+
+# Generate 4 variations, pick the best
+python tools/music_gen.py --prompt "Subtle corporate tech" --duration 60 --variations 4 --output bg.mp3
+
+# Fast mode (disable thinking)
+python tools/music_gen.py --no-thinking --prompt "Quick draft" --duration 30 --output draft.mp3
 
 # Scene presets for video production
 python tools/music_gen.py --preset corporate-bg --duration 60 --output bg.mp3
@@ -220,8 +228,17 @@ python tools/music_gen.py \
 # Cover / style transfer
 python tools/music_gen.py --cover --reference theme.mp3 --prompt "Jazz piano version" --output cover.mp3
 
+# Repaint a weak section (acemusic only)
+python tools/music_gen.py --repaint --input track.mp3 --repaint-start 15 --repaint-end 25 --prompt "Guitar solo" --output fixed.mp3
+
+# Continue from existing audio (acemusic only)
+python tools/music_gen.py --continuation --input track.mp3 --prompt "Continue with jazz piano" --output extended.mp3
+
 # Stem extraction
 python tools/music_gen.py --extract vocals --input mixed.mp3 --output vocals.mp3
+
+# Fall back to self-hosted
+python tools/music_gen.py --cloud modal --prompt "Background music" --duration 60 --output bg.mp3
 
 # List presets
 python tools/music_gen.py --list-presets

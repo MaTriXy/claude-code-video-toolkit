@@ -176,9 +176,10 @@ python tools/qwen3_tts.py --text "Hello world" --tone warm --output hello.mp3
 # Generate background music (ElevenLabs)
 python tools/music.py --prompt "Upbeat corporate" --duration 120 --output music.mp3
 
-# Generate background music (ACE-Step — free, precise BPM/key control)
+# Generate background music (ACE-Step — free cloud API, XL Turbo 4B model)
 python tools/music_gen.py --preset corporate-bg --duration 120 --output music.mp3
 python tools/music_gen.py --prompt "Dramatic cinematic" --duration 30 --bpm 90 --key "D Minor" --output reveal.mp3
+python tools/music_gen.py --prompt "Upbeat indie rock" --duration 60 --variations 4 --output intro.mp3
 
 # Generate sound effects
 python tools/sfx.py --preset whoosh --output sfx.mp3
@@ -236,7 +237,7 @@ python tools/ltx2.py --prompt "Gentle camera drift" --input photo.jpg --cloud mo
 | `flux2` | AI image generation & editing | ~$0.02 |
 | `image_edit` | AI image editing & style transfer | ~$0.03 |
 | `upscale` | AI image upscaling (2x/4x) | ~$0.01 |
-| `music_gen` | AI music generation (8 scene presets) | ~$0.05 |
+| `music_gen` | AI music generation (8 scene presets) | Free (acemusic) / ~$0.05 (self-hosted) |
 | `sadtalker` | Talking head video from portrait + audio | ~$0.10 |
 | `ltx2` | AI video generation (text-to-video, image-to-video) | ~$0.23 |
 | `dewatermark` | Video watermark removal | ~$0.10 |
