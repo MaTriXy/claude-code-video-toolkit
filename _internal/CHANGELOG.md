@@ -6,6 +6,27 @@ All notable changes to claude-code-video-toolkit.
 
 ---
 
+## 2026-04-04 (v0.14.1)
+
+### Added
+- **`tools/chain_video.py`** — Chain LTX-2 clips with visual continuity (each scene uses previous clip's last frame as input). Supports per-scene prompts via JSON, auto-resume of interrupted runs, and structured progress reporting.
+- **Structured progress reporting** (`--progress json`) for all cloud GPU tools
+- **OpenClaw skill: yieldMs polling** — agent stays in poll loop for live progress instead of going silent with `background:true`
+- **OpenClaw skill: style drift prevention** — rules to prevent anime/Asian style drift in chained LTX-2 sequences (per-scene prompts + negative prompts)
+
+### Changed
+- **acemusic cloud API** is now default music generation provider (official API, XL Turbo 4B model with 5Hz LM thinking)
+- **SadTalker timeouts** increased: 20x multiplier + 300s buffer for size=512+gfpgan on A10G
+- Synced official Remotion skills (upstream d5d3955)
+
+### Fixed
+- chain_video: glob matching for manually-renamed clips (e.g. `chain-05-brigid.mp4`)
+- chain_video: 20-min subprocess timeout, stderr in error messages, JSON validation, temp file cleanup
+- chain_video: registered in toolkit-registry.json
+- R2 recovery note for SadTalker client timeouts
+
+---
+
 ## 2026-03-26 (v0.13.2)
 
 ### Changed
