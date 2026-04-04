@@ -332,6 +332,58 @@ Use in Remotion compositions with `<OffthreadVideo>`:
 - Generated audio is ambient only — use voiceover/music tools for speech and music.
 - ~30% of generations may have training data artifacts (logos/text). Re-run with `--seed` to vary.
 
+#### 4d-chain. Chained Video Sequences (visual continuity)
+
+Generate a sequence of video clips where each scene flows from the last frame of the previous one. **This runs as a single command** — no manual nudging between scenes.
+
+```bash
+cd ~/.openclaw/workspace/claude-code-video-toolkit
+
+# Chain scenes 1-30 from a directory of FLUX images
+python3 tools/chain_video.py \
+  --scenes-dir projects/PROJECT_NAME/public/images/scenes/ \
+  --output-dir projects/PROJECT_NAME/public/videos/chain/ \
+  --prompt "Cinematic continuation, flowing transition" \
+  --start 1 --end 30 \
+  --progress json
+
+# Resume from scene 10 (skips existing files automatically)
+python3 tools/chain_video.py \
+  --scenes-dir projects/PROJECT_NAME/public/images/scenes/ \
+  --output-dir projects/PROJECT_NAME/public/videos/chain/ \
+  --start 10 --end 30 \
+  --progress json
+
+# Per-scene prompts from JSON file
+python3 tools/chain_video.py \
+  --scenes-dir projects/PROJECT_NAME/public/images/scenes/ \
+  --output-dir projects/PROJECT_NAME/public/videos/chain/ \
+  --prompts-file projects/PROJECT_NAME/scenes.json \
+  --progress json
+
+# Chain from an existing clip (no scene images needed)
+python3 tools/chain_video.py \
+  --first-clip output/chain-04.mp4 \
+  --output-dir output/ \
+  --start 5 --end 30 \
+  --prompt "Celtic mythology, flowing transition" \
+  --progress json
+```
+
+**Prompts file format** (`scenes.json`):
+```json
+{"1": "Ancient stone circle at dawn", "2": "Celtic spirals emerge from stone", "3": "Portal opens with golden light"}
+```
+
+**Chain rules:**
+- Extracts last frame from scene N, feeds as `--input` to scene N+1 via LTX-2
+- Skips scenes that already exist on disk (safe to resume)
+- Falls back to scene images from `--scenes-dir` if chaining fails
+- Use `--prefix` to set output filename prefix (default: `chain`)
+- ~2.5 min per scene, ~$0.20-0.25 per clip
+
+**CRITICAL: Run this as a single command.** Don't break it into per-scene tool calls — OpenClaw's agent run ends between calls, causing the sequence to stall.
+
 #### 4e. Talking Head Narrator (optional)
 
 Generate a presenter portrait, then animate per-scene clips:
