@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import platform
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -77,8 +78,45 @@ CORAL_HEX = "#F06859"
 SLATE_HEX = "#5E667A"
 WHITE_HEX = "#FFFFFF"
 
-FONT_BOLD = "/System/Library/Fonts/Supplemental/Arial Bold.ttf"
-FONT_REGULAR = "/System/Library/Fonts/Supplemental/Arial.ttf"
+# Cross-platform sans-serif fallback chain. PIL needs a real TTF; each
+# OS has well-known defaults for bold and regular. If nothing matches,
+# fall back to PIL's bitmap default so the example still runs.
+_FONT_CANDIDATES = {
+    "Darwin": {
+        "bold": [
+            "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
+            "/Library/Fonts/Arial Bold.ttf",
+        ],
+        "regular": [
+            "/System/Library/Fonts/Supplemental/Arial.ttf",
+            "/Library/Fonts/Arial.ttf",
+        ],
+    },
+    "Linux": {
+        "bold": [
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+            "/usr/share/fonts/TTF/DejaVuSans-Bold.ttf",
+        ],
+        "regular": [
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+            "/usr/share/fonts/TTF/DejaVuSans.ttf",
+        ],
+    },
+    "Windows": {
+        "bold":    ["C:/Windows/Fonts/arialbd.ttf"],
+        "regular": ["C:/Windows/Fonts/arial.ttf"],
+    },
+}
+
+
+def _load_font(size: int, *, bold: bool = True):
+    weight = "bold" if bold else "regular"
+    for path in _FONT_CANDIDATES.get(platform.system(), {}).get(weight, []):
+        try:
+            return ImageFont.truetype(path, size)
+        except (OSError, IOError):
+            continue
+    return ImageFont.load_default()
 
 
 # ── PIL text rendering with content-hash cache ────────────────────────
@@ -95,7 +133,7 @@ def render_text_png(txt: str, size: int, hex_color: str, *, bold: bool = True) -
     if path.exists():
         return str(path)
 
-    font = ImageFont.truetype(FONT_BOLD if bold else FONT_REGULAR, size)
+    font = _load_font(size, bold=bold)
     bbox = ImageDraw.Draw(Image.new("RGBA", (1, 1))).textbbox((0, 0), txt, font=font)
     tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
     pad = max(20, size // 4)

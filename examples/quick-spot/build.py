@@ -22,6 +22,7 @@ Patterns demonstrated
 from __future__ import annotations
 
 import hashlib
+import platform
 import sys
 from pathlib import Path
 
@@ -63,8 +64,31 @@ CORAL_HEX = "#F06859"
 WHITE_HEX = "#FFFFFF"
 SLATE_HEX = "#8B91A3"
 
-# Use any TTF on your system. Default: macOS Arial Bold.
-FONT_BOLD = "/System/Library/Fonts/Supplemental/Arial Bold.ttf"
+# Cross-platform bold sans-serif fallback chain. PIL needs a real TTF;
+# each OS has well-known defaults. If nothing matches, fall back to
+# PIL's bitmap default so the example still runs (ugly, but never crashes).
+_FONT_CANDIDATES = {
+    "Darwin": [
+        "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
+        "/Library/Fonts/Arial Bold.ttf",
+    ],
+    "Linux": [
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+        "/usr/share/fonts/TTF/DejaVuSans-Bold.ttf",
+    ],
+    "Windows": [
+        "C:/Windows/Fonts/arialbd.ttf",
+    ],
+}
+
+
+def _load_font(size: int):
+    for path in _FONT_CANDIDATES.get(platform.system(), []):
+        try:
+            return ImageFont.truetype(path, size)
+        except (OSError, IOError):
+            continue
+    return ImageFont.load_default()
 
 
 def render_text_png(txt: str, size: int, hex_color: str) -> str:
@@ -79,7 +103,7 @@ def render_text_png(txt: str, size: int, hex_color: str) -> str:
     if path.exists():
         return str(path)
 
-    font = ImageFont.truetype(FONT_BOLD, size)
+    font = _load_font(size)
     bbox = ImageDraw.Draw(Image.new("RGBA", (1, 1))).textbbox((0, 0), txt, font=font)
     tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
     pad = max(20, size // 4)
