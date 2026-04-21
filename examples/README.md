@@ -9,6 +9,7 @@ Curated showcase projects demonstrating toolkit capabilities.
 | hello-world | Remotion sprint-review | — | Minimal 25s video — zero config, renders in 2 minutes | Beginner |
 | quick-spot | moviepy + PIL | — | 15s ad-style spot with audio-anchored timeline. Runs with zero external assets. | Beginner |
 | data-viz-chart | moviepy + matplotlib | — | Animated time-series chart with deterministic title and source attribution. Runs with included data file. | Beginner |
+| ds-crt-stinger | LTX-2 + moviepy + PIL | — | 6s brand stinger — LTX-2 CRT LoRA footage + post-processed grunged logo | Intermediate |
 | digital-samba-skill-demo | Remotion product-demo | [Digital Samba](https://digitalsamba.com) | Marketing video for Claude Code skill | Intermediate |
 | sprint-review-cho-oyu | Remotion sprint-review | [Digital Samba](https://digitalsamba.com) | iOS sprint review for Digital Samba Mobile | Intermediate |
 
